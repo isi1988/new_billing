@@ -1,0 +1,1051 @@
+definitions:
+  models.Client:
+    properties:
+      accountant:
+        type: string
+      actual_address:
+        type: string
+      bank_details:
+        type: string
+      birth_date:
+        type: string
+      ceo:
+        type: string
+      client_type:
+        $ref: '#/definitions/models.ClientType'
+      email:
+        type: string
+      first_name:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: integer
+      inn:
+        type: string
+      kpp:
+        type: string
+      last_name:
+        type: string
+      legal_address:
+        type: string
+      ogrn:
+        type: string
+      ogrn_date:
+        type: string
+      passport_issue_date:
+        type: string
+      passport_issued_by:
+        type: string
+      passport_number:
+        type: string
+      patronymic:
+        type: string
+      phone:
+        type: string
+      registration_address:
+        type: string
+      short_name:
+        type: string
+    type: object
+  models.ClientType:
+    enum:
+    - individual
+    - legal_entity
+    type: string
+    x-enum-varnames:
+    - IndividualType
+    - LegalEntityType
+  models.Connection:
+    properties:
+      address:
+        type: string
+      connection_type:
+        type: string
+      contract_id:
+        type: integer
+      equipment_id:
+        type: integer
+      id:
+        type: integer
+      ip_address:
+        type: string
+      mask:
+        type: integer
+      tariff_id:
+        type: integer
+    type: object
+  models.Contract:
+    properties:
+      client_id:
+        type: integer
+      id:
+        type: integer
+      number:
+        type: string
+      sign_date:
+        type: string
+    type: object
+  models.Equipment:
+    properties:
+      description:
+        type: string
+      id:
+        type: integer
+      mac_address:
+        type: string
+      model:
+        type: string
+    type: object
+  models.PaymentType:
+    enum:
+    - postpaid
+    - prepaid
+    type: string
+    x-enum-varnames:
+    - Postpaid
+    - Prepaid
+  models.Role:
+    enum:
+    - admin
+    - manager
+    - client
+    type: string
+    x-enum-comments:
+      ClientRole: Для будущего личного кабинета
+    x-enum-descriptions:
+    - ""
+    - ""
+    - Для будущего личного кабинета
+    x-enum-varnames:
+    - AdminRole
+    - ManagerRole
+    - ClientRole
+  models.Tariff:
+    properties:
+      id:
+        type: integer
+      is_archived:
+        type: boolean
+      is_for_individuals:
+        type: boolean
+      max_speed_in:
+        type: integer
+      max_speed_out:
+        type: integer
+      max_traffic_in:
+        type: integer
+      max_traffic_out:
+        type: integer
+      name:
+        type: string
+      payment_type:
+        $ref: '#/definitions/models.PaymentType'
+    type: object
+  models.User:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      role:
+        $ref: '#/definitions/models.Role'
+      username:
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /clients:
+    get:
+      description: Возвращает список всех клиентов
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Client'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список клиентов
+      tags:
+      - Clients
+    post:
+      consumes:
+      - application/json
+      description: Создает нового клиента (физ. или юр. лицо)
+      parameters:
+      - description: Объект нового клиента
+        in: body
+        name: client
+        required: true
+        schema:
+          $ref: '#/definitions/models.Client'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Client'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Создать клиента
+      tags:
+      - Clients
+  /clients/{id}:
+    delete:
+      description: Удаляет клиента и все связанные с ним данные (договоры, подключения)
+      parameters:
+      - description: ID Клиента
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить клиента
+      tags:
+      - Clients
+    get:
+      description: Возвращает одного клиента по его ID
+      parameters:
+      - description: ID Клиента
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Client'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить клиента по ID
+      tags:
+      - Clients
+    put:
+      consumes:
+      - application/json
+      description: Обновляет данные клиента по ID
+      parameters:
+      - description: ID Клиента
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные данные
+        in: body
+        name: client
+        required: true
+        schema:
+          $ref: '#/definitions/models.Client'
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить клиента
+      tags:
+      - Clients
+  /connections:
+    get:
+      description: Возвращает все подключения
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Connection'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список подключений
+      tags:
+      - Connections
+    post:
+      consumes:
+      - application/json
+      description: Создает новую запись о подключении услуги
+      parameters:
+      - description: Объект нового подключения
+        in: body
+        name: connection
+        required: true
+        schema:
+          $ref: '#/definitions/models.Connection'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Connection'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Создать подключение
+      tags:
+      - Connections
+  /connections/{id}:
+    delete:
+      description: Удаляет подключение по ID
+      parameters:
+      - description: ID Подключения
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить подключение
+      tags:
+      - Connections
+    get:
+      description: Возвращает одно подключение по ID
+      parameters:
+      - description: ID Подключения
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Connection'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить подключение по ID
+      tags:
+      - Connections
+    put:
+      consumes:
+      - application/json
+      description: Обновляет данные подключения по ID
+      parameters:
+      - description: ID Подключения
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные данные
+        in: body
+        name: connection
+        required: true
+        schema:
+          $ref: '#/definitions/models.Connection'
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить подключение
+      tags:
+      - Connections
+  /contracts:
+    get:
+      description: Возвращает все договоры
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Contract'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список договоров
+      tags:
+      - Contracts
+    post:
+      consumes:
+      - application/json
+      description: Создает новый договор для клиента
+      parameters:
+      - description: Объект нового договора
+        in: body
+        name: contract
+        required: true
+        schema:
+          $ref: '#/definitions/models.Contract'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Contract'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Создать договор
+      tags:
+      - Contracts
+  /contracts/{id}:
+    delete:
+      description: Удаляет договор по ID
+      parameters:
+      - description: ID Договора
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить договор
+      tags:
+      - Contracts
+    get:
+      description: Возвращает один договор по ID
+      parameters:
+      - description: ID Договора
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Contract'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить договор по ID
+      tags:
+      - Contracts
+    put:
+      consumes:
+      - application/json
+      description: Обновляет данные договора по ID
+      parameters:
+      - description: ID Договора
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные данные
+        in: body
+        name: contract
+        required: true
+        schema:
+          $ref: '#/definitions/models.Contract'
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить договор
+      tags:
+      - Contracts
+  /equipment:
+    get:
+      description: Возвращает все оборудование
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Equipment'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список оборудования
+      tags:
+      - Equipment
+    post:
+      consumes:
+      - application/json
+      description: Создает новую запись об оборудовании
+      parameters:
+      - description: Объект нового оборудования
+        in: body
+        name: equipment
+        required: true
+        schema:
+          $ref: '#/definitions/models.Equipment'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Equipment'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Добавить оборудование
+      tags:
+      - Equipment
+  /equipment/{id}:
+    delete:
+      description: Удаляет оборудование по ID
+      parameters:
+      - description: ID Оборудования
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить оборудование
+      tags:
+      - Equipment
+    get:
+      description: Возвращает одну единицу оборудования по ID
+      parameters:
+      - description: ID Оборудования
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Equipment'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить оборудование по ID
+      tags:
+      - Equipment
+    put:
+      consumes:
+      - application/json
+      description: Обновляет данные оборудования по ID
+      parameters:
+      - description: ID Оборудования
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные данные
+        in: body
+        name: equipment
+        required: true
+        schema:
+          $ref: '#/definitions/models.Equipment'
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить оборудование
+      tags:
+      - Equipment
+  /login:
+    post:
+      consumes:
+      - application/json
+      description: Принимает имя пользователя и пароль, возвращает JWT токен в случае
+        успеха.
+      parameters:
+      - description: Учетные данные для входа
+        in: body
+        name: credentials
+        required: true
+        schema:
+          properties:
+            password:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Успешная аутентификация с JWT токеном
+          schema:
+            properties:
+              token:
+                type: string
+            type: object
+        "400":
+          description: Некорректный запрос
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Ошибка аутентификации
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Внутренняя ошибка сервера
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Аутентификация пользователя
+      tags:
+      - Auth
+  /tariffs:
+    get:
+      description: Возвращает список всех тарифов
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Tariff'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список тарифов
+      tags:
+      - Tariffs
+    post:
+      consumes:
+      - application/json
+      description: Создает новый тариф в системе
+      parameters:
+      - description: Объект нового тарифа
+        in: body
+        name: tariff
+        required: true
+        schema:
+          $ref: '#/definitions/models.Tariff'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Tariff'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Создать тариф
+      tags:
+      - Tariffs
+  /tariffs/{id}:
+    delete:
+      description: Удаляет тариф по его ID
+      parameters:
+      - description: ID Тарифа для удаления
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить тариф
+      tags:
+      - Tariffs
+    get:
+      description: Возвращает один тариф по его уникальному идентификатору
+      parameters:
+      - description: ID Тарифа
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Tariff'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить тариф по ID
+      tags:
+      - Tariffs
+    put:
+      consumes:
+      - application/json
+      description: Обновляет существующий тариф по его ID
+      parameters:
+      - description: ID Тарифа для обновления
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Объект с обновленными данными тарифа
+        in: body
+        name: tariff
+        required: true
+        schema:
+          $ref: '#/definitions/models.Tariff'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить тариф
+      tags:
+      - Tariffs
+  /users:
+    get:
+      description: Возвращает список всех пользователей
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.User'
+            type: array
+        "500":
+          description: Server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить список пользователей
+      tags:
+      - Users
+    post:
+      consumes:
+      - application/json
+      description: Создает нового пользователя (доступно только администраторам)
+      parameters:
+      - description: Данные нового пользователя
+        in: body
+        name: user
+        required: true
+        schema:
+          properties:
+            password:
+              type: string
+            role:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.User'
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Создать пользователя
+      tags:
+      - Users
+  /users/{id}:
+    delete:
+      description: Удаляет пользователя по ID (нельзя удалить 'admin')
+      parameters:
+      - description: ID Пользователя
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "404":
+          description: User not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Удалить пользователя
+      tags:
+      - Users
+    get:
+      description: Возвращает одного пользователя по его ID
+      parameters:
+      - description: ID Пользователя
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "404":
+          description: User not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Получить пользователя по ID
+      tags:
+      - Users
+    put:
+      consumes:
+      - application/json
+      description: Обновляет данные пользователя (кроме пароля)
+      parameters:
+      - description: ID Пользователя
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Обновленные данные
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.User'
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: User not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Обновить пользователя
+      tags:
+      - Users
+swagger: "2.0"

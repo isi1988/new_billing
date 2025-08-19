@@ -1,0 +1,50 @@
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
+
+/*
+  CSS Переменные для дизайна.
+  Все они должны быть объявлены внутри селектора :root,
+  что делает их глобально доступными для всего приложения.
+*/
+:root {
+    --primary-color: #5A67D8;      /* Индиго с фиолетовым оттенком */
+    --primary-color-dark: #434190; /* <-- ЭТА СТРОКА ТЕПЕРЬ ВНУТРИ :root */
+    --accent-color: #805AD5;       /* Фиолетовый */
+    --text-color: #2D3748;
+    --text-color-light: #718096;
+    --background-color: #F7FAFC;
+    --surface-color: #FFFFFF;
+    --border-color: #E2E8F0;
+    --danger-color: #E53E3E;
+    --success-color: #48BB78;
+    --font-family: 'Roboto', sans-serif;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+.page-container {
+    padding: 24px;
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.page-header h1 {
+    font-size: 24px;
+    font-weight: 500;
+    margin: 0;
+}
