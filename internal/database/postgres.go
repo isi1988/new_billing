@@ -4,23 +4,40 @@ import (
 	"fmt"
 	"log"
 	"new-billing/internal/config"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq" // Драйвер PostgreSQL, импортируется для регистрации
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Connect устанавливает соединение с базой данных PostgreSQL, используя конфигурацию.
-// В случае ошибки приложение завершит работу.
+// Connect устанавливает соединение с базой данных PostgreSQL с повторными попытками.
+// Это особенно важно в Docker-среде, где база данных может еще не быть готова.
 func Connect(cfg config.DatabaseConfig) *sqlx.DB {
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.DBName, cfg.SSLMode)
 
-	db, err := sqlx.Connect("postgres", connStr)
-	if err != nil {
-		log.Fatalf("FATAL: Failed to connect to database: %v", err)
+	const maxRetries = 10
+	const retryDelay = 2 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		db, err := sqlx.Connect("postgres", connStr)
+		if err == nil {
+			log.Printf("Successfully connected to database on attempt %d", i+1)
+			return db
+		}
+		
+		if i < maxRetries-1 {
+			log.Printf("Failed to connect to database (attempt %d/%d): %v. Retrying in %v...", 
+				i+1, maxRetries, err, retryDelay)
+			time.Sleep(retryDelay)
+		} else {
+			log.Fatalf("FATAL: Failed to connect to database after %d attempts: %v", maxRetries, err)
+		}
 	}
-	return db
+	
+	// Этот код никогда не должен быть достигнут, но добавляем для безопасности
+	return nil
 }
 
 // Migrate выполняет миграцию схемы базы данных.

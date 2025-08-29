@@ -74,23 +74,44 @@ async function handleSave(userData) {
   try {
     if (isEditMode.value) {
       await updateItem(userData.id, userData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Пользователь обновлён',
+        message: 'Данные пользователя успешно обновлены'
+      });
     } else {
       await createItem(userData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Пользователь создан',
+        message: 'Новый пользователь успешно создан'
+      });
     }
     isModalOpen.value = false;
     currentUser.value = null; // Очищаем форму
   } catch (error) {
-    alert('Не удалось сохранить пользователя.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить пользователя'
+    });
   }
 }
 
 async function handleDelete(userId) {
-  if (confirm('Вы уверены, что хотите удалить этого пользователя?')) {
-    try {
-      await deleteItem(userId);
-    } catch (error) {
-      alert('Не удалось удалить пользователя.');
-    }
+  try {
+    await deleteItem(userId);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Пользователь удалён',
+      message: 'Пользователь успешно удалён из системы'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить пользователя'
+    });
   }
 }
 

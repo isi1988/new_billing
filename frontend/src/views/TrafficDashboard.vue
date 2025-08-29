@@ -334,27 +334,8 @@ export default {
       error.value = null;
       
       try {
-        // Если выбран клиент и нет конкретного IP-адреса, получаем все IP клиента
-        let searchIPs = [];
-        if (selectedClient.value && !filters.ipAddress) {
-          try {
-            const clientIPsResponse = await apiClient.get(`/clients/${selectedClient.value.id}/ips`);
-            searchIPs = clientIPsResponse.data.ip_addresses || [];
-            console.log(`Found ${searchIPs.length} IP addresses for client:`, searchIPs);
-          } catch (e) {
-            console.log('Could not fetch client IPs:', e.message);
-          }
-        }
-        
-        // Определяем, какой IP использовать для поиска
-        let searchIP = filters.ipAddress;
-        if (!searchIP && searchIPs.length > 0) {
-          // Если не указан конкретный IP, но есть IP клиента, используем первый
-          // В дальнейшем можно модифицировать для поиска по всем IP клиента
-          searchIP = searchIPs[0];
-        }
-        
-        if (!searchIP) {
+        // Проверяем, что есть хотя бы один критерий поиска
+        if (!selectedClient.value && !filters.ipAddress) {
           error.value = 'Необходимо указать IP-адрес или выбрать клиента';
           loading.value = false;
           return;

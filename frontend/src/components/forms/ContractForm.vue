@@ -1,6 +1,9 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue';
 import apiClient from '@/api/client';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 const props = defineProps({
   initialData: { type: Object, default: () => ({}) },
@@ -44,7 +47,11 @@ async function fetchClients() {
     }
   } catch (error) {
     console.error("Не удалось загрузить список клиентов:", error);
-    alert("Ошибка загрузки списка клиентов.");
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка загрузки',
+      message: 'Ошибка загрузки списка клиентов'
+    });
   } finally {
     isLoadingClients.value = false;
   }
@@ -100,32 +107,52 @@ onMounted(fetchClients);
 function handleSubmit() {
   // Валидация клиента
   if (!form.value.client_id) {
-    alert('Пожалуйста, выберите клиента');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Необходимо указать',
+      message: 'Пожалуйста, выберите клиента'
+    });
     return;
   }
   
   const clientId = parseInt(form.value.client_id, 10);
   if (isNaN(clientId) || clientId <= 0) {
-    alert('Некорректный ID клиента');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Некорректные данные',
+      message: 'Некорректный ID клиента'
+    });
     return;
   }
   
   // Проверяем, что выбранный клиент существует в списке
   const selectedClient = clients.value.find(c => c.id === clientId);
   if (!selectedClient) {
-    alert('Выбранный клиент не найден в списке');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Клиент не найден',
+      message: 'Выбранный клиент не найден в списке'
+    });
     return;
   }
   
   // Валидация номера договора
   if (!form.value.number || !form.value.number.trim()) {
-    alert('Пожалуйста, введите номер договора');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Необходимо указать',
+      message: 'Пожалуйста, введите номер договора'
+    });
     return;
   }
   
   // Валидация даты
   if (!form.value.sign_date) {
-    alert('Пожалуйста, укажите дату подписания');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Необходимо указать',
+      message: 'Пожалуйста, укажите дату подписания'
+    });
     return;
   }
   

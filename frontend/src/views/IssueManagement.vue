@@ -8,7 +8,9 @@ import IssueHistory from '@/components/IssueHistory.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import { formatDate, formatDateOptional } from '@/utils/dateUtils';
 import apiClient from '@/api/client';
+import { useNotificationStore } from '@/stores/notification';
 
+const notificationStore = useNotificationStore();
 const { items: issues, loading, createItem, updateItem, deleteItem } = useCrud('issues');
 
 const isModalOpen = ref(false);
@@ -61,28 +63,49 @@ async function handleSave(issueData) {
   try {
     if (isEditMode.value) {
       await updateItem(issueData.id, issueData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Обращение обновлено',
+        message: 'Данные обращения успешно обновлены'
+      });
     } else {
       await createItem(issueData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Обращение создано',
+        message: 'Новое обращение успешно создано'
+      });
     }
     isModalOpen.value = false;
     currentIssue.value = null;
   } catch (error) {
-    alert('Не удалось сохранить задачу.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить задачу'
+    });
   }
 }
 
 async function handleDelete(issueId) {
-  if (confirm('Вы уверены, что хотите удалить эту задачу?')) {
-    try {
-      await deleteItem(issueId);
-    } catch (error) {
-      alert('Не удалось удалить задачу.');
-    }
+  try {
+    await deleteItem(issueId);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Обращение удалено',
+      message: 'Обращение успешно удалено'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить задачу'
+    });
   }
 }
 
 async function resolveIssue(issue) {
-  if (confirm('Отметить задачу как решенную?')) {
+  {
     try {
       const response = await fetch(`/api/issues/${issue.id}/resolve`, {
         method: 'POST',
@@ -104,7 +127,11 @@ async function resolveIssue(issue) {
         throw new Error('Failed to resolve issue');
       }
     } catch (error) {
-      alert('Не удалось решить задачу.');
+      notificationStore.addNotification({
+        type: 'error',
+        title: 'Ошибка',
+        message: 'Не удалось решить задачу'
+      });
     }
   }
 }
@@ -137,7 +164,11 @@ function closeUnresolveModal() {
 
 async function confirmUnresolve() {
   if (!unresolveReason.value.trim()) {
-    alert('Укажите причину возврата в работу');
+    notificationStore.addNotification({
+      type: 'warning',
+      title: 'Необходимо указать',
+      message: 'Укажите причину возврата в работу'
+    });
     return;
   }
 
@@ -168,7 +199,11 @@ async function confirmUnresolve() {
     }
   } catch (error) {
     console.error('Error unresolving issue:', error);
-    alert('Не удалось вернуть задачу в работу: ' + error.message);
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка',
+      message: 'Не удалось вернуть задачу в работу: ' + error.message
+    });
   }
 }
 
@@ -217,7 +252,11 @@ async function addComment(issueId) {
     newCommentText.value[issueId] = '';
   } catch (error) {
     console.error('Failed to add comment:', error);
-    alert('Не удалось добавить комментарий');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка',
+      message: 'Не удалось добавить комментарий'
+    });
   } finally {
     addingComment.value.delete(issueId);
   }

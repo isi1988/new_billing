@@ -5,6 +5,9 @@ import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import EquipmentForm from '@/components/forms/EquipmentForm.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 // Инициализируем CRUD-операции для эндпоинта '/api/equipment'
 const {
@@ -78,24 +81,45 @@ async function handleSave(equipmentData) {
   try {
     if (isEditMode.value) {
       await updateItem(equipmentData.id, equipmentData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Оборудование обновлено',
+        message: 'Данные оборудования успешно обновлены'
+      });
     } else {
       await createItem(equipmentData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Оборудование создано',
+        message: 'Новое оборудование успешно добавлено'
+      });
     }
     isModalOpen.value = false; // Закрываем модальное окно при успехе
     currentEquipment.value = null; // Очищаем форму
   } catch (error) {
-    alert('Не удалось сохранить данные. Проверьте консоль.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить данные'
+    });
   }
 }
 
 // Обработчик события 'delete' от таблицы
 async function handleDelete(itemId) {
-  if (confirm('Вы уверены, что хотите удалить эту запись?')) {
-    try {
-      await deleteItem(itemId);
-    } catch (error) {
-      alert('Не удалось удалить запись. Проверьте консоль.');
-    }
+  try {
+    await deleteItem(itemId);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Оборудование удалено',
+      message: 'Оборудование успешно удалено'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить запись'
+    });
   }
 }
 

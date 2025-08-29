@@ -310,4 +310,31 @@ function handleSubmit() {
   margin-bottom: 4px;
   font-size: 13px;
 }
+
+/* Validation errors */
+.validation-errors {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.5rem;
+  color: #dc2626;
+}
+
+.validation-errors .error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.validation-errors ul {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.validation-errors li {
+  margin-bottom: 0.25rem;
+}
 </style>

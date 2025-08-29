@@ -10,6 +10,9 @@ import PhoneDisplay from '@/components/ui/PhoneDisplay.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
 import apiClient from '@/api/client';
 import { formatDate } from '@/utils/dateUtils';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 // Инициализируем роутер
 const router = useRouter();
@@ -136,29 +139,52 @@ async function handleSave(clientData) {
   try {
     if (isEditMode.value) {
       await updateItem(clientData.id, clientData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Клиент обновлён',
+        message: 'Данные клиента успешно обновлены'
+      });
     } else {
       await createItem(clientData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Клиент создан',
+        message: 'Новый клиент успешно создан'
+      });
     }
     isModalOpen.value = false;
     currentClient.value = null; // Очищаем форму
   } catch (error) {
-    alert('Не удалось сохранить клиента.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить клиента'
+    });
   }
 }
 
 async function handleDelete(itemId) {
-  if (confirm('Вы уверены, что хотите удалить клиента? Все его договоры и подключения также будут удалены!')) {
+  {
     try {
       await deleteItem(itemId);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Клиент удалён',
+        message: 'Клиент успешно удалён'
+      });
     } catch (error) {
-      alert('Не удалось удалить клиента.');
+      notificationStore.addNotification({
+        type: 'error',
+        title: 'Ошибка удаления',
+        message: 'Не удалось удалить клиента'
+      });
     }
   }
 }
 
 async function handleBlock(client) {
   const action = client.is_blocked ? 'разблокировать' : 'заблокировать';
-  if (confirm(`Вы уверены, что хотите ${action} клиента?`)) {
+  {
     try {
       const endpoint = client.is_blocked ? 'unblock' : 'block';
       await apiClient.post(`/clients/${client.id}/${endpoint}`);
@@ -169,7 +195,11 @@ async function handleBlock(client) {
         clients.value[index].is_blocked = !client.is_blocked;
       }
     } catch (error) {
-      alert(`Не удалось ${action} клиента.`);
+      notificationStore.addNotification({
+        type: 'error',
+        title: 'Ошибка операции',
+        message: `Не удалось ${action} клиента`
+      });
     }
   }
 }
@@ -190,7 +220,11 @@ async function toggleContracts(client) {
         clientContracts.value[client.id] = response.data || [];
       } catch (error) {
         console.error('Ошибка загрузки договоров:', error);
-        alert('Не удалось загрузить договоры.');
+        notificationStore.addNotification({
+          type: 'error',
+          title: 'Ошибка загрузки',
+          message: 'Не удалось загрузить договоры'
+        });
         clientContracts.value[client.id] = [];
       } finally {
         loadingContracts.value.delete(client.id);
@@ -202,21 +236,29 @@ async function toggleContracts(client) {
 // Функция блокировки/разблокировки договора
 async function handleContractBlock(contract, clientId) {
   const action = contract.is_blocked ? 'разблокировать' : 'заблокировать';
-  if (confirm(`Вы уверены, что хотите ${action} договор?`)) {
-    try {
-      const endpoint = contract.is_blocked ? 'unblock' : 'block';
-      await apiClient.post(`/contracts/${contract.id}/${endpoint}`);
-      
-      // Обновляем статус договора в локальном массиве
-      if (clientContracts.value[clientId]) {
-        const index = clientContracts.value[clientId].findIndex(c => c.id === contract.id);
-        if (index !== -1) {
-          clientContracts.value[clientId][index].is_blocked = !contract.is_blocked;
-        }
+  try {
+    const endpoint = contract.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/contracts/${contract.id}/${endpoint}`);
+    
+    // Обновляем статус договора в локальном массиве
+    if (clientContracts.value[clientId]) {
+      const index = clientContracts.value[clientId].findIndex(c => c.id === contract.id);
+      if (index !== -1) {
+        clientContracts.value[clientId][index].is_blocked = !contract.is_blocked;
       }
-    } catch (error) {
-      alert(`Не удалось ${action} договор.`);
     }
+    
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Операция выполнена',
+      message: `Договор успешно ${contract.is_blocked ? 'заблокирован' : 'разблокирован'}`
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка операции',
+      message: `Не удалось ${action} договор`
+    });
   }
 }
 

@@ -16,9 +16,10 @@ services:
       - ariadna-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   backend:
     image: sivanov2018/new_billing:latest

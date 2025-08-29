@@ -6,6 +6,9 @@ import Modal from '@/components/ui/Modal.vue';
 import TariffForm from '@/components/forms/TariffForm.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 // Инициализируем CRUD-операции для эндпоинта '/api/tariffs'
 const {
@@ -127,24 +130,45 @@ async function handleSave(tariffData) {
   try {
     if (isEditMode.value) {
       await updateItem(tariffData.id, tariffData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Тариф обновлён',
+        message: 'Данные тарифа успешно обновлены'
+      });
     } else {
       await createItem(tariffData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Тариф создан',
+        message: 'Новый тариф успешно создан'
+      });
     }
     isModalOpen.value = false;
     currentTariff.value = null; // Очищаем форму
   } catch (error) {
-    alert('Не удалось сохранить тариф.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить тариф'
+    });
   }
 }
 
 // Обработка удаления тарифа
 async function handleDelete(itemId) {
-  if (confirm('Вы уверены, что хотите удалить этот тариф?')) {
-    try {
-      await deleteItem(itemId);
-    } catch (error) {
-      alert('Не удалось удалить тариф.');
-    }
+  try {
+    await deleteItem(itemId);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Тариф удалён',
+      message: 'Тариф успешно удалён из системы'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить тариф'
+    });
   }
 }
 

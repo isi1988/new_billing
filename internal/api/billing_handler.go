@@ -1491,6 +1491,31 @@ func (h *BillingHandler) UnblockContract(w http.ResponseWriter, r *http.Request)
 // @Success      200  {array}   models.TrafficResponse
 // @Failure      400  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
+// addIPAddressFilter добавляет условие фильтрации по IP адресу с поддержкой различных форматов
+func addIPAddressFilter(ipAddress string, whereClauses *[]string, args *[]interface{}, argIndex *int) {
+	if ipAddress == "" {
+		return
+	}
+
+	if strings.Contains(ipAddress, "/") {
+		// CIDR нотация (например, 192.168.1.0/24)
+		// Используем inet для поддержки CIDR запросов
+		*whereClauses = append(*whereClauses, "c.ip_address::inet <<= $"+strconv.Itoa(*argIndex)+"::inet")
+		*args = append(*args, ipAddress)
+	} else if strings.Contains(ipAddress, "*") {
+		// Маска с * (например, 192.168.1.*)
+		// Заменяем * на % для LIKE запроса
+		likePattern := strings.ReplaceAll(ipAddress, "*", "%")
+		*whereClauses = append(*whereClauses, "c.ip_address LIKE $"+strconv.Itoa(*argIndex))
+		*args = append(*args, likePattern)
+	} else {
+		// Точный IP или частичное совпадение
+		*whereClauses = append(*whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(*argIndex))
+		*args = append(*args, "%"+ipAddress+"%")
+	}
+	*argIndex++
+}
+
 // @Router       /traffic [get]
 // @Security     BearerAuth
 func (h *BillingHandler) GetTrafficData(w http.ResponseWriter, r *http.Request) {
@@ -1527,11 +1552,8 @@ func (h *BillingHandler) GetTrafficData(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
-		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
-		args = append(args, "%"+ipAddress+"%")
-		argIndex++
-	}
+	// Добавляем фильтр по IP адресу
+	addIPAddressFilter(queryParams.Get("ip_address"), &whereClauses, &args, &argIndex)
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02 15:04:05", fromDate); err == nil {
@@ -1632,11 +1654,8 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
-		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
-		args = append(args, "%"+ipAddress+"%")
-		argIndex++
-	}
+	// Добавляем фильтр по IP адресу
+	addIPAddressFilter(queryParams.Get("ip_address"), &whereClauses, &args, &argIndex)
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
@@ -1771,11 +1790,8 @@ func (h *BillingHandler) ExportTrafficCSV(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
-		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
-		args = append(args, "%"+ipAddress+"%")
-		argIndex++
-	}
+	// Добавляем фильтр по IP адресу
+	addIPAddressFilter(queryParams.Get("ip_address"), &whereClauses, &args, &argIndex)
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02 15:04:05", fromDate); err == nil {

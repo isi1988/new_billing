@@ -83,8 +83,8 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid CIDR notation: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Используем PostgreSQL оператор << для проверки вхождения в сеть
-		ipClause = "(src_ip << $" + strconv.Itoa(argIndex) + " OR dst_ip << $" + strconv.Itoa(argIndex) + ")"
+		// Используем PostgreSQL оператор << для проверки вхождения в сеть с приведением типов к inet
+		ipClause = "(src_ip::inet << $" + strconv.Itoa(argIndex) + "::inet OR dst_ip::inet << $" + strconv.Itoa(argIndex) + "::inet)"
 		args = append(args, ipNet.String())
 		argIndex++
 	} else if strings.Contains(ipAddress, "*") {

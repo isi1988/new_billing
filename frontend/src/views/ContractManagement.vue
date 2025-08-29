@@ -10,6 +10,9 @@ import StatusBadge from '@/components/ui/StatusBadge.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
 import apiClient from '@/api/client';
 import { formatDate } from '@/utils/dateUtils';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 // Инициализируем роутер
 const router = useRouter();
@@ -137,13 +140,27 @@ async function handleSave(contractData) {
   try {
     if (isEditMode.value) {
       await updateItem(contractData.id, contractData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Договор обновлён',
+        message: 'Данные договора успешно обновлены'
+      });
     } else {
       await createItem(contractData);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Договор создан',
+        message: 'Новый договор успешно создан'
+      });
     }
     isModalOpen.value = false;
     currentContract.value = null; // Очищаем форму
   } catch (error) {
-    alert('Не удалось сохранить договор.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить договор'
+    });
   }
 }
 
@@ -164,24 +181,37 @@ async function handleConnectionSave(connectionData) {
     }
   } catch (error) {
     console.error('Ошибка сохранения подключения:', error);
-    alert('Не удалось сохранить подключение.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить подключение'
+    });
   }
 }
 
 // Обработка удаления
 async function handleDelete(itemId) {
-  if (confirm('Вы уверены, что хотите удалить этот договор? Это также удалит все связанные с ним подключения.')) {
+  {
     try {
       await deleteItem(itemId);
+      notificationStore.addNotification({
+        type: 'success',
+        title: 'Договор удалён',
+        message: 'Договор успешно удалён'
+      });
     } catch (error) {
-      alert('Не удалось удалить договор.');
+      notificationStore.addNotification({
+        type: 'error',
+        title: 'Ошибка удаления',
+        message: 'Не удалось удалить договор'
+      });
     }
   }
 }
 
 async function handleBlock(contract) {
   const action = contract.is_blocked ? 'разблокировать' : 'заблокировать';
-  if (confirm(`Вы уверены, что хотите ${action} договор?`)) {
+  {
     try {
       const endpoint = contract.is_blocked ? 'unblock' : 'block';
       await apiClient.post(`/contracts/${contract.id}/${endpoint}`);
@@ -192,7 +222,11 @@ async function handleBlock(contract) {
         contracts.value[index].is_blocked = !contract.is_blocked;
       }
     } catch (error) {
-      alert(`Не удалось ${action} договор.`);
+      notificationStore.addNotification({
+        type: 'error',
+        title: 'Ошибка операции',
+        message: `Не удалось ${action} договор`
+      });
     }
   }
 }
@@ -212,7 +246,11 @@ async function toggleConnections(contract) {
         contractConnections.value[contract.id] = response.data || [];
       } catch (error) {
         console.error('Ошибка загрузки подключений:', error);
-        alert('Не удалось загрузить подключения.');
+        notificationStore.addNotification({
+          type: 'error',
+          title: 'Ошибка загрузки',
+          message: 'Не удалось загрузить подключения'
+        });
         contractConnections.value[contract.id] = [];
       } finally {
         loadingConnections.value.delete(contract.id);
@@ -224,21 +262,29 @@ async function toggleConnections(contract) {
 // Функция блокировки/разблокировки подключения
 async function handleConnectionBlock(connection, contractId) {
   const action = connection.is_blocked ? 'разблокировать' : 'заблокировать';
-  if (confirm(`Вы уверены, что хотите ${action} подключение?`)) {
-    try {
-      const endpoint = connection.is_blocked ? 'unblock' : 'block';
-      await apiClient.post(`/connections/${connection.id}/${endpoint}`);
-      
-      // Обновляем статус подключения в локальном массиве
-      if (contractConnections.value[contractId]) {
-        const index = contractConnections.value[contractId].findIndex(c => c.id === connection.id);
-        if (index !== -1) {
-          contractConnections.value[contractId][index].is_blocked = !connection.is_blocked;
-        }
+  try {
+    const endpoint = connection.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/connections/${connection.id}/${endpoint}`);
+    
+    // Обновляем статус подключения в локальном массиве
+    if (contractConnections.value[contractId]) {
+      const index = contractConnections.value[contractId].findIndex(c => c.id === connection.id);
+      if (index !== -1) {
+        contractConnections.value[contractId][index].is_blocked = !connection.is_blocked;
       }
-    } catch (error) {
-      alert(`Не удалось ${action} подключение.`);
     }
+    
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Операция выполнена',
+      message: `Подключение успешно ${connection.is_blocked ? 'разблокировано' : 'заблокировано'}`
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка операции',
+      message: `Не удалось ${action} подключение`
+    });
   }
 }
 

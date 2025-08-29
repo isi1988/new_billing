@@ -7,6 +7,9 @@ import ConnectionForm from '@/components/forms/ConnectionForm.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import apiClient from '@/api/client';
+import { useNotificationStore } from '@/stores/notification';
+
+const notificationStore = useNotificationStore();
 
 // Инициализируем CRUD-операции для эндпоинта '/api/connections'
 const {
@@ -156,45 +159,70 @@ function openEditModal(item) {
 // Обработка сохранения данных из формы
 async function handleSave(connectionData) {
   try {
+    let result;
     if (isEditMode.value) {
-      await updateItem(connectionData.id, connectionData);
+      result = await updateItem(connectionData.id, connectionData);
     } else {
-      await createItem(connectionData);
+      result = await createItem(connectionData);
     }
+    
+    // Проверяем на предупреждения об IP конфликтах
+    if (result && result.data && result.data.warning) {
+      notificationStore.addNotification({
+        type: 'warning',
+        title: 'Предупреждение',
+        message: result.data.warning
+      });
+    }
+    
     isModalOpen.value = false;
-    currentConnection.value = null; // Очищаем форму
+    currentConnection.value = null;
   } catch (error) {
-    alert('Не удалось сохранить подключение.');
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка сохранения',
+      message: 'Не удалось сохранить подключение'
+    });
   }
 }
 
 // Обработка удаления
 async function handleDelete(itemId) {
-  if (confirm('Вы уверены, что хотите удалить это подключение?')) {
-    try {
-      await deleteItem(itemId);
-    } catch (error) {
-      alert('Не удалось удалить подключение.');
-    }
+  try {
+    await deleteItem(itemId);
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить подключение'
+    });
   }
 }
 
 // Функция блокировки/разблокировки подключения
 async function handleBlock(connection) {
   const action = connection.is_blocked ? 'разблокировать' : 'заблокировать';
-  if (confirm(`Вы уверены, что хотите ${action} подключение?`)) {
-    try {
-      const endpoint = connection.is_blocked ? 'unblock' : 'block';
-      await apiClient.post(`/connections/${connection.id}/${endpoint}`);
-      
-      // Обновляем статус подключения в локальном массиве
-      const index = connections.value.findIndex(c => c.id === connection.id);
-      if (index !== -1) {
-        connections.value[index].is_blocked = !connection.is_blocked;
-      }
-    } catch (error) {
-      alert(`Не удалось ${action} подключение.`);
+  try {
+    const endpoint = connection.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/connections/${connection.id}/${endpoint}`);
+    
+    // Обновляем статус подключения в локальном массиве
+    const index = connections.value.findIndex(c => c.id === connection.id);
+    if (index !== -1) {
+      connections.value[index].is_blocked = !connection.is_blocked;
     }
+    
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Операция выполнена',
+      message: `Подключение успешно ${connection.is_blocked ? 'разблокировано' : 'заблокировано'}`
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка операции',
+      message: `Не удалось ${action} подключение`
+    });
   }
 }
 
