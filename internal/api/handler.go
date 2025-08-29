@@ -216,60 +216,135 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	var pageBytesIn, pageBytesOut int64
 	
 	for _, flow := range flowsFromDB {
-		// Правильная логика определения направления как в ConnectionStats
-		if flow.SrcIP == ipAddress {
-			// Исходящий трафик - трафик ИЗ этого IP
-			flow.Direction = "outgoing"
-			flow.BytesIn = 0
-			flow.BytesOut = flow.Bytes
-			pageBytesOut += flow.Bytes
-		} else if flow.DstIP == ipAddress {
-			// Входящий трафик - трафик К этому IP
-			flow.Direction = "incoming"
-			flow.BytesIn = flow.Bytes
-			flow.BytesOut = 0
-			pageBytesIn += flow.Bytes
-		} else {
-			// Если используется подсеть/маска, определяем по IP подключения
-			// В этом случае нужно проверить, что поиск шел именно по подсети
-			if subnet != "" || strings.Contains(ipAddress, "/") || strings.Contains(ipAddress, "*") {
-				// Для подсетевого поиска считаем трафик по факту IP адресов
-				if flow.SrcIP == ipAddress {
+		if subnet != "" {
+			// Для подсети проверяем вхождение IP в подсеть
+			_, ipNet, err := net.ParseCIDR(subnet)
+			if err == nil {
+				srcInSubnet := ipNet.Contains(net.ParseIP(flow.SrcIP))
+				dstInSubnet := ipNet.Contains(net.ParseIP(flow.DstIP))
+				
+				if srcInSubnet && !dstInSubnet {
+					// Исходящий трафик - из подсети наружу
 					flow.Direction = "outgoing"
 					flow.BytesIn = 0
 					flow.BytesOut = flow.Bytes
 					pageBytesOut += flow.Bytes
-				} else {
-					flow.Direction = "incoming" 
+				} else if !srcInSubnet && dstInSubnet {
+					// Входящий трафик - извне в подсеть
+					flow.Direction = "incoming"
 					flow.BytesIn = flow.Bytes
 					flow.BytesOut = 0
 					pageBytesIn += flow.Bytes
+				} else if srcInSubnet && dstInSubnet {
+					// Внутри подсети - смешанный
+					flow.Direction = "internal"
+					flow.BytesIn = flow.Bytes / 2
+					flow.BytesOut = flow.Bytes / 2
+					pageBytesIn += flow.Bytes / 2
+					pageBytesOut += flow.Bytes / 2
+				} else {
+					// Трафик не относится к подсети (не должно происходить из-за WHERE clause)
+					flow.Direction = "mixed"
+					flow.BytesIn = flow.Bytes / 2
+					flow.BytesOut = flow.Bytes / 2
+					pageBytesIn += flow.Bytes / 2
+					pageBytesOut += flow.Bytes / 2
 				}
 			} else {
-				// Fallback для точного поиска
+				// Ошибка парсинга CIDR
 				flow.Direction = "mixed"
 				flow.BytesIn = flow.Bytes / 2
 				flow.BytesOut = flow.Bytes / 2
 				pageBytesIn += flow.Bytes / 2
 				pageBytesOut += flow.Bytes / 2
 			}
+		} else {
+			// Логика для точного поиска IP
+			if flow.SrcIP == ipAddress {
+				// Исходящий трафик - трафик ИЗ этого IP
+				flow.Direction = "outgoing"
+				flow.BytesIn = 0
+				flow.BytesOut = flow.Bytes
+				pageBytesOut += flow.Bytes
+			} else if flow.DstIP == ipAddress {
+				// Входящий трафик - трафик К этому IP
+				flow.Direction = "incoming"
+				flow.BytesIn = flow.Bytes
+				flow.BytesOut = 0
+				pageBytesIn += flow.Bytes
+			} else {
+				// Проверяем другие варианты поиска (CIDR без маски, wildcard)
+				if strings.Contains(ipAddress, "/") {
+					// CIDR notation
+					_, ipNet, err := net.ParseCIDR(ipAddress)
+					if err == nil {
+						srcInSubnet := ipNet.Contains(net.ParseIP(flow.SrcIP))
+						dstInSubnet := ipNet.Contains(net.ParseIP(flow.DstIP))
+						
+						if srcInSubnet && !dstInSubnet {
+							flow.Direction = "outgoing"
+							flow.BytesIn = 0
+							flow.BytesOut = flow.Bytes
+							pageBytesOut += flow.Bytes
+						} else if !srcInSubnet && dstInSubnet {
+							flow.Direction = "incoming"
+							flow.BytesIn = flow.Bytes
+							flow.BytesOut = 0
+							pageBytesIn += flow.Bytes
+						} else {
+							flow.Direction = "internal"
+							flow.BytesIn = flow.Bytes / 2
+							flow.BytesOut = flow.Bytes / 2
+							pageBytesIn += flow.Bytes / 2
+							pageBytesOut += flow.Bytes / 2
+						}
+					}
+				} else {
+					// Fallback для других случаев
+					flow.Direction = "mixed"
+					flow.BytesIn = flow.Bytes / 2
+					flow.BytesOut = flow.Bytes / 2
+					pageBytesIn += flow.Bytes / 2
+					pageBytesOut += flow.Bytes / 2
+				}
+			}
 		}
 		flows = append(flows, flow)
 	}
 
 	// Отдельный запрос для получения всего входящего, исходящего и общего трафика
-	totalQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(SUM(CASE WHEN dst_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_in,
-			COALESCE(SUM(CASE WHEN src_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_out,
-			COALESCE(SUM(bytes), 0) as total_traffic
-		FROM flows
-		%s
-	`, argIndex, argIndex+1, whereClause)
+	var totalQuery string
+	var totalArgs []interface{}
 	
-	totalArgs := make([]interface{}, len(args))
-	copy(totalArgs, args)
-	totalArgs = append(totalArgs, ipAddress, ipAddress)
+	if subnet != "" {
+		// Для подсетей используем PostgreSQL оператор << для определения направления
+		totalQuery = fmt.Sprintf(`
+			SELECT 
+				COALESCE(SUM(CASE WHEN dst_ip::inet << $%d::inet THEN bytes ELSE 0 END), 0) as total_bytes_in,
+				COALESCE(SUM(CASE WHEN src_ip::inet << $%d::inet THEN bytes ELSE 0 END), 0) as total_bytes_out,
+				COALESCE(SUM(bytes), 0) as total_traffic
+			FROM flows
+			%s
+		`, argIndex, argIndex+1, whereClause)
+		
+		totalArgs = make([]interface{}, len(args))
+		copy(totalArgs, args)
+		totalArgs = append(totalArgs, subnet, subnet)
+	} else {
+		// Для точного поиска IP используем точные сравнения
+		totalQuery = fmt.Sprintf(`
+			SELECT 
+				COALESCE(SUM(CASE WHEN dst_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_in,
+				COALESCE(SUM(CASE WHEN src_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_out,
+				COALESCE(SUM(bytes), 0) as total_traffic
+			FROM flows
+			%s
+		`, argIndex, argIndex+1, whereClause)
+		
+		totalArgs = make([]interface{}, len(args))
+		copy(totalArgs, args)
+		totalArgs = append(totalArgs, ipAddress, ipAddress)
+	}
 	var totalResult struct {
 		TotalBytesIn  int64 `db:"total_bytes_in"`
 		TotalBytesOut int64 `db:"total_bytes_out"`

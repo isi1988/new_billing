@@ -308,6 +308,9 @@ export default {
       if (item.direction === 'outgoing') {
         return 'Исходящий';
       }
+      if (item.direction === 'internal') {
+        return 'Внутренний';
+      }
       if (item.direction === 'mixed') {
         return 'Смешанный';
       }
