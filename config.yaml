@@ -15,4 +15,4 @@ auth:
 telegram:
   bot_token: "8300267329:AAFC-qrrWCDEk1gXdncXcv_f7GqP4LzCoVc"
   chat_id: "-4922706074"
-  enabled: false
+  enabled: true

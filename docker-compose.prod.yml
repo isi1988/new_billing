@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: ariadna-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ariadna
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ariadna-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: sivanov2018/new_billing:latest
+    container_name: ariadna-backend
+    ports:
+      - "8080:8080"
+    environment:
+      TELEGRAM_BOT_TOKEN: 8300267329:AAFC-qrrWCDEk1gXdncXcv_f7GqP4LzCoVc
+      TELEGRAM_CHAT: -4922706074
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: password
+      DATABASE_NAME: ariadna
+      DATABASE_SSLMODE: disable
+      SERVER_PORT: :8080
+      JWT_SECRET: a-very-long-and-secure-secret-key-that-you-must-change
+      NFCAPD_DIRECTORY: /data/nfcapd
+      NFCAPD_SCAN_INTERVAL: 5m
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - /home/billing/data/:/data/nfcapd
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ariadna-network
+
+volumes:
+  postgres_data:
+
+networks:
+  ariadna-network:
+    driver: bridge

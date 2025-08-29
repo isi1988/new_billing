@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, reactive } from 'vue';
+import { ref, computed, reactive, onMounted } from 'vue';
 import { useCrud } from '@/composables/useCrud';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
@@ -198,12 +198,34 @@ async function handleBlock(connection) {
   }
 }
 
+// Function to load contracts and tariffs for filters
+async function loadFilterData() {
+  loadingFilters.value = true;
+  try {
+    const [contractsRes, tariffsRes] = await Promise.all([
+      apiClient.get('/contracts'),
+      apiClient.get('/tariffs')
+    ]);
+    contracts.value = contractsRes.data || [];
+    tariffs.value = tariffsRes.data || [];
+  } catch (error) {
+    console.error('Failed to load filter data:', error);
+  } finally {
+    loadingFilters.value = false;
+  }
+}
+
+// Load filter data on component mount
+onMounted(() => {
+  loadFilterData();
+});
+
 // Search and filter functions
 function clearFilters() {
   searchQuery.value = '';
   filterValues.connection_type = '';
-  filterValues.contract_id = '';
-  filterValues.tariff_id = '';
+  filterValues.contract_number = '';
+  filterValues.tariff_name = '';
 }
 </script>
 

@@ -44,6 +44,37 @@
               </option>
             </select>
 
+            <!-- Searchable Select Filter -->
+            <div v-else-if="filter.type === 'searchable-select'" class="searchable-select">
+              <input 
+                :value="getSelectedLabel(filter)"
+                @input="onSearchableInput(filter.key, $event.target.value)"
+                @focus="showDropdown(filter.key)"
+                @blur="hideDropdown(filter.key)"
+                type="text"
+                class="form-control"
+                :placeholder="filter.placeholder || 'Выберите...' "
+                :disabled="filter.loading"
+                autocomplete="off"
+              />
+              <div 
+                v-if="dropdownStates[filter.key] && getFilteredOptions(filter).length > 0" 
+                class="dropdown-menu"
+              >
+                <div 
+                  v-for="option in getFilteredOptions(filter)" 
+                  :key="option.value"
+                  class="dropdown-item"
+                  @mousedown="selectOption(filter.key, option.value, option.label)"
+                >
+                  {{ option.label }}
+                </div>
+              </div>
+              <span v-if="filter.loading" class="loading-indicator">
+                <span class="material-icons">hourglass_empty</span>
+              </span>
+            </div>
+
             <!-- Date Filter -->
             <input 
               v-else-if="filter.type === 'date'"
@@ -98,7 +129,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch } from 'vue';
+import { ref, reactive, watch, computed } from 'vue';
 
 const props = defineProps({
   searchQuery: { type: String, default: '' },
@@ -108,6 +139,11 @@ const props = defineProps({
 });
 
 const emit = defineEmits(['search', 'filter', 'apply', 'clear']);
+
+// State for searchable selects
+const searchQueries = ref({});
+const dropdownStates = ref({});
+const selectedLabels = ref({});
 
 function updateSearch(event) {
   emit('search', event.target.value);
@@ -122,7 +158,61 @@ function applyFilters() {
 }
 
 function clearFilters() {
+  searchQueries.value = {};
+  selectedLabels.value = {};
+  dropdownStates.value = {};
   emit('clear');
+}
+
+// Searchable select functions
+function onSearchableInput(key, value) {
+  searchQueries.value[key] = value;
+  if (!value.trim()) {
+    updateFilter(key, '');
+    selectedLabels.value[key] = '';
+  }
+}
+
+function showDropdown(key) {
+  dropdownStates.value[key] = true;
+}
+
+function hideDropdown(key) {
+  setTimeout(() => {
+    dropdownStates.value[key] = false;
+  }, 150);
+}
+
+function selectOption(key, value, label) {
+  updateFilter(key, value);
+  selectedLabels.value[key] = label;
+  searchQueries.value[key] = '';
+  dropdownStates.value[key] = false;
+}
+
+function getSelectedLabel(filter) {
+  const key = filter.key;
+  if (selectedLabels.value[key]) {
+    return selectedLabels.value[key];
+  }
+  if (props.filterValues[key]) {
+    // Find the label for the current value
+    const option = filter.options.find(opt => opt.value === props.filterValues[key]);
+    return option ? option.label : '';
+  }
+  return searchQueries.value[key] || '';
+}
+
+function getFilteredOptions(filter) {
+  if (!filter.options) return [];
+  
+  const query = searchQueries.value[filter.key]?.toLowerCase() || '';
+  if (!query) return filter.options.slice(0, 10); // Limit to first 10 options
+  
+  return filter.options.filter(option => {
+    const searchText = option.searchText || option.label;
+    return searchText.toLowerCase().includes(query);
+  }).slice(0, 10);
 }
 </script>
 
@@ -145,6 +235,42 @@ function clearFilters() {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.searchable-select {
+  position: relative;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid var(--gray-300);
+  border-radius: 4px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 9999;
+}
+
+.dropdown-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.dropdown-item:hover {
+  background-color: var(--gray-100);
+}
+
+.loading-indicator {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gray-500);
 }
 
 @media (max-width: 768px) {

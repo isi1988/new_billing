@@ -97,20 +97,20 @@
       </div>
       <div class="card stat-card">
         <div class="card-body">
+          <h3 class="stat-label">Входящий трафик</h3>
+          <p class="stat-value text-success">{{ formatBytes(stats.total_bytes_in) }}</p>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="card-body">
+          <h3 class="stat-label">Исходящий трафик</h3>
+          <p class="stat-value text-info">{{ formatBytes(stats.total_bytes_out) }}</p>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="card-body">
           <h3 class="stat-label">Общий трафик</h3>
-          <p class="stat-value text-success">{{ formatBytes(stats.total_traffic) }}</p>
-        </div>
-      </div>
-      <div class="card stat-card">
-        <div class="card-body">
-          <h3 class="stat-label">Средний трафик</h3>
-          <p class="stat-value text-warning">{{ formatBytes(stats.avg_traffic) }}</p>
-        </div>
-      </div>
-      <div class="card stat-card">
-        <div class="card-body">
-          <h3 class="stat-label">Максимальный трафик</h3>
-          <p class="stat-value text-danger">{{ formatBytes(stats.max_traffic) }}</p>
+          <p class="stat-value text-warning">{{ formatBytes(stats.total_traffic) }}</p>
         </div>
       </div>
     </div>
@@ -556,7 +556,7 @@ export default {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   max-height: 200px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 9999;
   margin-top: 2px;
 }
 

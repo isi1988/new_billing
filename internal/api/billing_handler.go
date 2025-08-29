@@ -198,8 +198,28 @@ func (h *BillingHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 // @Router       /clients [get]
 // @Security     BearerAuth
 func (h *BillingHandler) GetClients(w http.ResponseWriter, r *http.Request) {
-	clients := []models.Client{}
-	if err := h.DB.Select(&clients, "SELECT * FROM clients ORDER BY id"); err != nil {
+	type ClientWithDetails struct {
+		models.Client
+		ContractsCount int `json:"contracts_count" db:"contracts_count"`
+	}
+
+	var clients []ClientWithDetails
+	query := `
+		SELECT 
+			c.*,
+			COALESCE(COUNT(ct.id), 0) as contracts_count
+		FROM clients c
+		LEFT JOIN contracts ct ON c.id = ct.client_id
+		GROUP BY c.id, c.client_type, c.email, c.phone, c.is_blocked, 
+			c.first_name, c.last_name, c.patronymic, c.passport_number, 
+			c.passport_issued_by, c.passport_issue_date, c.registration_address, 
+			c.birth_date, c.inn, c.kpp, c.full_name, c.short_name, c.ogrn, 
+			c.ogrn_date, c.legal_address, c.actual_address, c.bank_name, 
+			c.bank_account, c.bank_bik, c.bank_correspondent, c.ceo, c.accountant
+		ORDER BY c.id
+	`
+
+	if err := h.DB.Select(&clients, query); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -526,9 +546,64 @@ func (h *BillingHandler) CreateContract(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	
+	// Return the full contract details including client information
+	type ContractWithDetails struct {
+		ID               int               `json:"id" db:"id"`
+		Number           string            `json:"number" db:"number"`
+		SignDate         models.CustomDate `json:"sign_date" db:"sign_date"`
+		ClientID         int               `json:"client_id" db:"client_id"`
+		IsBlocked        bool              `json:"is_blocked" db:"is_blocked"`
+		ConnectionsCount int               `json:"connections_count" db:"connections_count"`
+		ClientName       string            `json:"client_name" db:"client_name"`
+		ClientEmail      string            `json:"client_email" db:"client_email"`
+		ClientType       string            `json:"client_type" db:"client_type"`
+	}
+	
+	var createdContract ContractWithDetails
+	detailsQuery := `
+		SELECT 
+			c.id, c.number, c.sign_date, c.client_id, c.is_blocked,
+			COUNT(DISTINCT conn.id) as connections_count,
+			COALESCE(
+				CASE 
+					WHEN cl.client_type = 'individual' THEN 
+						COALESCE(cl.last_name || ' ' || cl.first_name, cl.email)
+					ELSE 
+						COALESCE(cl.short_name, cl.full_name, cl.email)
+				END,
+				'Клиент #' || cl.id
+			) as client_name,
+			COALESCE(cl.email, '') as client_email,
+			cl.client_type
+		FROM contracts c
+		LEFT JOIN connections conn ON c.id = conn.contract_id
+		LEFT JOIN clients cl ON c.client_id = cl.id
+		WHERE c.id = $1
+		GROUP BY c.id, c.number, c.sign_date, c.client_id, c.is_blocked, 
+				 cl.id, cl.client_type, cl.last_name, cl.first_name, cl.email, 
+				 cl.short_name, cl.full_name
+	`
+	
+	err = h.DB.QueryRow(detailsQuery, contract.ID).Scan(
+		&createdContract.ID,
+		&createdContract.Number,
+		&createdContract.SignDate,
+		&createdContract.ClientID,
+		&createdContract.IsBlocked,
+		&createdContract.ConnectionsCount,
+		&createdContract.ClientName,
+		&createdContract.ClientEmail,
+		&createdContract.ClientType,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(contract)
+	json.NewEncoder(w).Encode(createdContract)
 }
 
 // @Summary      Получить список договоров
@@ -1173,13 +1248,14 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 	baseQuery := `
 		SELECT 
 			COUNT(*) as total_records,
-			COALESCE(SUM(bytes_in), 0) as total_bytes_in,
-			COALESCE(SUM(bytes_out), 0) as total_bytes_out,
-			COALESCE(SUM(bytes_in + bytes_out), 0) as total_traffic,
-			COALESCE(AVG(bytes_in + bytes_out), 0) as avg_traffic,
-			COALESCE(MAX(bytes_in + bytes_out), 0) as max_traffic,
-			COALESCE(MIN(bytes_in + bytes_out), 0) as min_traffic
+			COALESCE(SUM(t.bytes_in), 0) as total_bytes_in,
+			COALESCE(SUM(t.bytes_out), 0) as total_bytes_out,
+			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as total_traffic,
+			COALESCE(AVG(t.bytes_in + t.bytes_out), 0) as avg_traffic,
+			COALESCE(MAX(t.bytes_in + t.bytes_out), 0) as max_traffic,
+			COALESCE(MIN(t.bytes_in + t.bytes_out), 0) as min_traffic
 		FROM traffic t
+		LEFT JOIN connections c ON t.connection_id = c.id
 	`
 
 	if clientID := queryParams.Get("client_id"); clientID != "" {
@@ -1188,6 +1264,12 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 			args = append(args, id)
 			argIndex++
 		}
+	}
+
+	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
+		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
+		args = append(args, "%"+ipAddress+"%")
+		argIndex++
 	}
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
