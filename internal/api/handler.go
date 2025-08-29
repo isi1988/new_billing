@@ -103,7 +103,7 @@ func (h *APIHandler) AggregateFlows(w http.ResponseWriter, r *http.Request) {
 	//}
 
 	query := fmt.Sprintf(`
-		SELECT date_trunc('%s', timestamp) as time_period, SUM(bytes) as total_bytes
+		SELECT date_trunc('%s', timestamp) as time_period, COALESCE(SUM(bytes), 0) as total_bytes
 		FROM flows
 		WHERE timestamp BETWEEN $1 AND $2
 		GROUP BY time_period

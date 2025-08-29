@@ -10,6 +10,7 @@ type Config struct {
 	Auth     AuthConfig     `yaml:"auth"` // ДОБАВЛЕНО
 	Database DatabaseConfig `yaml:"database"`
 	Nfcapd   NfcapdConfig   `yaml:"nfcapd"`
+	Telegram TelegramConfig `yaml:"telegram"`
 }
 
 // ДОБАВЛЕНА СТРУКТУРА
@@ -33,6 +34,12 @@ type DatabaseConfig struct {
 type NfcapdConfig struct {
 	Directory    string `yaml:"directory"`
 	ScanInterval string `yaml:"scan_interval"`
+}
+
+type TelegramConfig struct {
+	BotToken string `yaml:"bot_token"`
+	ChatID   string `yaml:"chat_id"`
+	Enabled  bool   `yaml:"enabled"`
 }
 
 func LoadConfig(path string) (*Config, error) {

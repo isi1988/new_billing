@@ -3,101 +3,67 @@ package database
 import (
 	"fmt"
 	"log"
-	"math/rand"
 	"new-billing/internal/models"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
-func SeedTestData(db *sqlx.DB) {
-	log.Println("Seeding test data...")
-
-	// Проверяем, есть ли уже тестовые данные в таблице traffic
-	var count int
-	err := db.Get(&count, "SELECT COUNT(*) FROM traffic")
-	if err != nil {
-		log.Printf("Error checking traffic data: %v", err)
-		return
+// ProcessIPTraffic обрабатывает трафик по IP и связывает с клиентом если возможно
+func ProcessIPTraffic(db *sqlx.DB, srcIP, dstIP string, bytes, packets int64, timestamp time.Time) error {
+	// Ищем подключение по IP (источник или назначение)
+	var connection struct {
+		ID        int    `db:"id"`
+		ClientID  int    `db:"client_id"`
+		IPAddress string `db:"ip_address"`
 	}
 
-	// Если данные уже есть, пропускаем заполнение
-	if count > 0 {
-		log.Println("Test data already exists, skipping seeding")
-		return
-	}
-
-	// Получаем все подключения для генерации трафика
-	var connections []struct {
-		ID       int `db:"id"`
-		ClientID int `db:"client_id"`
-	}
-
-	err = db.Select(&connections, `
-		SELECT c.id, ct.client_id 
+	// Сначала проверяем, является ли источник нашим клиентом
+	err := db.Get(&connection, `
+		SELECT c.id, ct.client_id, c.ip_address
 		FROM connections c 
 		JOIN contracts ct ON c.contract_id = ct.id
-	`)
+		WHERE c.ip_address = $1
+	`, srcIP)
 
 	if err != nil {
-		log.Printf("Error getting connections: %v", err)
-		return
-	}
+		// Если источник не найден, проверяем назначение
+		err = db.Get(&connection, `
+			SELECT c.id, ct.client_id, c.ip_address
+			FROM connections c 
+			JOIN contracts ct ON c.contract_id = ct.id
+			WHERE c.ip_address = $1
+		`, dstIP)
 
-	if len(connections) == 0 {
-		log.Println("No connections found, cannot seed traffic data")
-		return
-	}
-
-	// Генерируем тестовые данные трафика за последние 30 дней
-	now := time.Now()
-	rand.Seed(time.Now().UnixNano())
-
-	log.Printf("Generating traffic data for %d connections...", len(connections))
-
-	// Для каждого подключения генерируем случайные записи трафика
-	for _, conn := range connections {
-		// Генерируем от 50 до 200 записей за последние 30 дней
-		recordCount := rand.Intn(150) + 50
-
-		for i := 0; i < recordCount; i++ {
-			// Случайное время за последние 30 дней
-			hoursBack := rand.Intn(30 * 24) // 30 дней * 24 часа
-			timestamp := now.Add(-time.Duration(hoursBack) * time.Hour)
-
-			// Добавляем случайные минуты и секунды для разнообразия
-			minutesOffset := rand.Intn(60)
-			secondsOffset := rand.Intn(60)
-			timestamp = timestamp.Add(time.Duration(minutesOffset)*time.Minute + time.Duration(secondsOffset)*time.Second)
-
-			// Генерируем реалистичные значения трафика
-			// Входящий трафик: от 100KB до 500MB
-			bytesIn := int64(rand.Intn(500*1024*1024-100*1024) + 100*1024)
-			// Исходящий трафик: обычно меньше входящего
-			bytesOut := int64(rand.Intn(int(bytesIn/2)) + 1024)
-
-			// Пакеты пропорционально трафику
-			packetsIn := bytesIn / int64(rand.Intn(1400)+500) // средний размер пакета 500-1900 байт
-			packetsOut := bytesOut / int64(rand.Intn(1400)+500)
-
-			// Вставляем запись
-			_, err := db.Exec(`
-				INSERT INTO traffic (connection_id, client_id, timestamp, bytes_in, bytes_out, packets_in, packets_out)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-			`, conn.ID, conn.ClientID, timestamp, bytesIn, bytesOut, packetsIn, packetsOut)
-
-			if err != nil {
-				log.Printf("Error inserting traffic data: %v", err)
-				continue
-			}
+		if err != nil {
+			// Если ни источник, ни назначение не являются нашими клиентами, игнорируем
+			return nil
 		}
 	}
 
-	// Подсчитываем сколько записей создали
-	err = db.Get(&count, "SELECT COUNT(*) FROM traffic")
-	if err == nil {
-		log.Printf("Successfully seeded %d traffic records", count)
+	// Определяем направление трафика
+	var bytesIn, bytesOut, packetsIn, packetsOut int64
+	if connection.IPAddress == dstIP {
+		// Трафик идет К нашему клиенту (входящий)
+		bytesIn = bytes
+		packetsIn = packets
+		bytesOut = 0
+		packetsOut = 0
+	} else {
+		// Трафик идет ОТ нашего клиента (исходящий)
+		bytesOut = bytes
+		packetsOut = packets
+		bytesIn = 0
+		packetsIn = 0
 	}
+
+	// Записываем данные трафика
+	_, err = db.Exec(`
+		INSERT INTO traffic (connection_id, client_id, timestamp, bytes_in, bytes_out, packets_in, packets_out)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, connection.ID, connection.ClientID, timestamp, bytesIn, bytesOut, packetsIn, packetsOut)
+
+	return err
 }
 
 func SeedBasicData(db *sqlx.DB) {
@@ -245,7 +211,7 @@ func SeedBasicData(db *sqlx.DB) {
 	contractIDs := make([]int, 0, len(clientIDs))
 	for i, clientID := range clientIDs {
 		contractNumber := generateContractNumber(i + 1)
-		signDate := time.Now().AddDate(0, -rand.Intn(12), 0) // Договор подписан в течение последнего года
+		signDate := time.Now().AddDate(0, -1, 0) // Договор подписан месяц назад
 
 		var id int
 		err := db.QueryRow(`
@@ -260,7 +226,7 @@ func SeedBasicData(db *sqlx.DB) {
 		contractIDs = append(contractIDs, id)
 	}
 
-	// Создаем подключения
+	// Создаем подключения с реальными IP адресами
 	for i, contractID := range contractIDs {
 		if i >= len(equipmentIDs) || i >= len(tariffIDs) {
 			break
@@ -280,6 +246,10 @@ func SeedBasicData(db *sqlx.DB) {
 	}
 
 	log.Println("Basic test data seeded successfully")
+	log.Println("IP addresses assigned:")
+	log.Println("- 192.168.1.101 -> Иван Петров")
+	log.Println("- 192.168.1.102 -> Мария Сидорова")
+	log.Println("- 192.168.1.103 -> ООО \"ТехКорп\"")
 }
 
 func stringPtr(s string) *string {

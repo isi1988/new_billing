@@ -122,13 +122,88 @@ func Migrate(db *sqlx.DB) {
 		address TEXT NOT NULL,
 		connection_type VARCHAR(50),
 		tariff_id INT NOT NULL REFERENCES tariffs(id),
-		ip_address VARCHAR(45) UNIQUE NOT NULL,
-		mask INT NOT NULL
+		ip_address VARCHAR(45) NOT NULL,
+		mask INT NOT NULL,
+		is_blocked BOOLEAN DEFAULT FALSE
 	);
+
+	CREATE TABLE IF NOT EXISTS traffic (
+		id SERIAL PRIMARY KEY,
+		connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+		client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+		timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+		bytes_in BIGINT NOT NULL DEFAULT 0,
+		bytes_out BIGINT NOT NULL DEFAULT 0,
+		packets_in BIGINT NOT NULL DEFAULT 0,
+		packets_out BIGINT NOT NULL DEFAULT 0,
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+
+	-- Создаем индексы для таблицы traffic
+	CREATE INDEX IF NOT EXISTS idx_traffic_client_id ON traffic(client_id);
+	CREATE INDEX IF NOT EXISTS idx_traffic_connection_id ON traffic(connection_id);
+	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_traffic_client_timestamp ON traffic(client_id, timestamp);
+
+	-- Таблица для доработок/задач
+	CREATE TABLE IF NOT EXISTS issues (
+		id SERIAL PRIMARY KEY,
+		title VARCHAR(255) NOT NULL,
+		description TEXT NOT NULL,
+		status VARCHAR(20) NOT NULL DEFAULT 'new',
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+		resolved_at TIMESTAMP WITH TIME ZONE,
+		created_by INT NOT NULL REFERENCES users(id),
+		resolved_by INT REFERENCES users(id)
+	);
+
+	-- Создаем индексы для таблицы issues
+	CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
+	CREATE INDEX IF NOT EXISTS idx_issues_created_at ON issues(created_at);
+	CREATE INDEX IF NOT EXISTS idx_issues_created_by ON issues(created_by);
+
+	-- Таблица для истории редактирования задач
+	CREATE TABLE IF NOT EXISTS issue_history (
+		id SERIAL PRIMARY KEY,
+		issue_id INT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+		field_name VARCHAR(50) NOT NULL,
+		old_value TEXT,
+		new_value TEXT,
+		edited_by INT NOT NULL REFERENCES users(id),
+		edited_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+	);
+
+	-- Создаем индексы для таблицы issue_history
+	CREATE INDEX IF NOT EXISTS idx_issue_history_issue_id ON issue_history(issue_id);
+	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_at ON issue_history(edited_at);
+	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_by ON issue_history(edited_by);
 	`
 	// MustExec выполняет запрос и паникует в случае ошибки.
 	// Это допустимо при старте приложения, так как без корректной схемы оно не может работать.
 	db.MustExec(schema)
+
+	// Удаляем ограничение уникальности с ip_address, если оно существует
+	migrationSQL := `
+		DO $$ 
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.table_constraints 
+				WHERE constraint_name = 'connections_ip_address_key' 
+				AND table_name = 'connections'
+			) THEN
+				ALTER TABLE connections DROP CONSTRAINT connections_ip_address_key;
+			END IF;
+			
+			-- Добавляем поле is_blocked если его нет
+			IF NOT EXISTS (
+				SELECT 1 FROM information_schema.columns 
+				WHERE table_name = 'connections' AND column_name = 'is_blocked'
+			) THEN
+				ALTER TABLE connections ADD COLUMN is_blocked BOOLEAN DEFAULT FALSE;
+			END IF;
+		END $$;
+	`
+	db.MustExec(migrationSQL)
 
 	// Проверяем и создаем пользователя 'admin' с паролем 'admin', если его нет.
 	var userCount int

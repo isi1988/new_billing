@@ -3,8 +3,10 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"new-bill
+	"new-billing/internal/models"
+	"new-billing/internal/telegram"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +17,8 @@ import (
 )
 
 type BillingHandler struct {
-	DB *sqlx.DB
+	DB              *sqlx.DB
+	TelegramService *telegram.TelegramService
 }
 
 // --- Хелпер для получения количества измененных строк ---
@@ -537,13 +540,51 @@ func (h *BillingHandler) CreateContract(w http.ResponseWriter, r *http.Request) 
 // @Router       /contracts [get]
 // @Security     BearerAuth
 func (h *BillingHandler) GetContracts(w http.ResponseWriter, r *http.Request) {
-	contracts := []models.Contract{}
-	if err := h.DB.Select(&contracts, "SELECT * FROM contracts ORDER BY id"); err != nil {
+	type ContractWithDetails struct {
+		ID               int               `json:"id" db:"id"`
+		Number           string            `json:"number" db:"number"`
+		SignDate         models.CustomDate `json:"sign_date" db:"sign_date"`
+		ClientID         int               `json:"client_id" db:"client_id"`
+		IsBlocked        bool              `json:"is_blocked" db:"is_blocked"`
+		ConnectionsCount int               `json:"connections_count" db:"connections_count"`
+		ClientName       string            `json:"client_name" db:"client_name"`
+		ClientEmail      string            `json:"client_email" db:"client_email"`
+		ClientType       string            `json:"client_type" db:"client_type"`
+	}
+
+	var contractsWithDetails []ContractWithDetails
+
+	query := `
+		SELECT 
+			c.id, c.number, c.sign_date, c.client_id, c.is_blocked,
+			COUNT(DISTINCT conn.id) as connections_count,
+			COALESCE(
+				CASE 
+					WHEN cl.client_type = 'individual' THEN 
+						COALESCE(cl.last_name || ' ' || cl.first_name, cl.email)
+					ELSE 
+						COALESCE(cl.short_name, cl.full_name, cl.email)
+				END,
+				'Клиент #' || cl.id
+			) as client_name,
+			COALESCE(cl.email, '') as client_email,
+			cl.client_type
+		FROM contracts c
+		LEFT JOIN connections conn ON c.id = conn.contract_id
+		LEFT JOIN clients cl ON c.client_id = cl.id
+		GROUP BY c.id, c.number, c.sign_date, c.client_id, c.is_blocked, 
+				 cl.id, cl.client_type, cl.last_name, cl.first_name, cl.email, 
+				 cl.short_name, cl.full_name
+		ORDER BY c.id
+	`
+
+	if err := h.DB.Select(&contractsWithDetails, query); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(contracts)
+	json.NewEncoder(w).Encode(contractsWithDetails)
 }
 
 // @Summary      Получить договор по ID
@@ -630,8 +671,8 @@ func (h *BillingHandler) CreateConnection(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := `INSERT INTO connections (equipment_id, contract_id, address, connection_type, tariff_id, ip_address, mask) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
-	err := h.DB.QueryRow(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask).Scan(&conn.ID)
+	query := `INSERT INTO connections (equipment_id, contract_id, address, connection_type, tariff_id, ip_address, mask, is_blocked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
+	err := h.DB.QueryRow(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask, conn.IsBlocked).Scan(&conn.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -650,13 +691,40 @@ func (h *BillingHandler) CreateConnection(w http.ResponseWriter, r *http.Request
 // @Router       /connections [get]
 // @Security     BearerAuth
 func (h *BillingHandler) GetConnections(w http.ResponseWriter, r *http.Request) {
-	connections := []models.Connection{}
-	if err := h.DB.Select(&connections, "SELECT * FROM connections ORDER BY id"); err != nil {
+	type ConnectionWithDetails struct {
+		ID             int    `json:"id" db:"id"`
+		EquipmentID    int    `json:"equipment_id" db:"equipment_id"`
+		ContractID     int    `json:"contract_id" db:"contract_id"`
+		Address        string `json:"address" db:"address"`
+		ConnectionType string `json:"connection_type" db:"connection_type"`
+		TariffID       int    `json:"tariff_id" db:"tariff_id"`
+		IPAddress      string `json:"ip_address" db:"ip_address"`
+		Mask           int    `json:"mask" db:"mask"`
+		IsBlocked      bool   `json:"is_blocked" db:"is_blocked"`
+		ContractNumber string `json:"contract_number" db:"contract_number"`
+		TariffName     string `json:"tariff_name" db:"tariff_name"`
+	}
+
+	var connectionsWithDetails []ConnectionWithDetails
+
+	query := `
+		SELECT 
+			c.id, c.equipment_id, c.contract_id, c.address, c.connection_type,
+			c.tariff_id, c.ip_address, c.mask, c.is_blocked,
+			cont.number as contract_number,
+			t.name as tariff_name
+		FROM connections c
+		LEFT JOIN contracts cont ON c.contract_id = cont.id
+		LEFT JOIN tariffs t ON c.tariff_id = t.id
+		ORDER BY c.id
+	`
+
+	if err := h.DB.Select(&connectionsWithDetails, query); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(connections)
+	json.NewEncoder(w).Encode(connectionsWithDetails)
 }
 
 // @Summary      Получить подключение по ID
@@ -696,8 +764,8 @@ func (h *BillingHandler) UpdateConnection(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := `UPDATE connections SET equipment_id=$1, contract_id=$2, address=$3, connection_type=$4, tariff_id=$5, ip_address=$6, mask=$7 WHERE id=$8`
-	res, err := h.DB.Exec(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask, id)
+	query := `UPDATE connections SET equipment_id=$1, contract_id=$2, address=$3, connection_type=$4, tariff_id=$5, ip_address=$6, mask=$7, is_blocked=$8 WHERE id=$9`
+	res, err := h.DB.Exec(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask, conn.IsBlocked, id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Connection not found or not updated", http.StatusNotFound)
 		return
@@ -721,6 +789,99 @@ func (h *BillingHandler) DeleteConnection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary      Получить подключения по договору
+// @Description  Возвращает все подключения для указанного договора
+// @Tags         Connections
+// @Produce      json
+// @Param        contract_id   path      int  true  "ID Договора"
+// @Success      200  {array}   models.Connection
+// @Failure      500  {object}  map[string]string
+// @Router       /contracts/{contract_id}/connections [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetConnectionsByContract(w http.ResponseWriter, r *http.Request) {
+	contractID := mux.Vars(r)["contract_id"]
+
+	type ConnectionWithDetails struct {
+		ID             int    `json:"id" db:"id"`
+		EquipmentID    int    `json:"equipment_id" db:"equipment_id"`
+		ContractID     int    `json:"contract_id" db:"contract_id"`
+		Address        string `json:"address" db:"address"`
+		ConnectionType string `json:"connection_type" db:"connection_type"`
+		TariffID       int    `json:"tariff_id" db:"tariff_id"`
+		IPAddress      string `json:"ip_address" db:"ip_address"`
+		Mask           int    `json:"mask" db:"mask"`
+		IsBlocked      bool   `json:"is_blocked" db:"is_blocked"`
+		ContractNumber string `json:"contract_number" db:"contract_number"`
+		TariffName     string `json:"tariff_name" db:"tariff_name"`
+		EquipmentModel string `json:"equipment_model" db:"equipment_model"`
+	}
+
+	var connections []ConnectionWithDetails
+
+	query := `
+		SELECT 
+			c.id, c.equipment_id, c.contract_id, c.address, c.connection_type,
+			c.tariff_id, c.ip_address, c.mask, c.is_blocked,
+			cont.number as contract_number,
+			t.name as tariff_name,
+			e.model as equipment_model
+		FROM connections c
+		LEFT JOIN contracts cont ON c.contract_id = cont.id
+		LEFT JOIN tariffs t ON c.tariff_id = t.id
+		LEFT JOIN equipment e ON c.equipment_id = e.id
+		WHERE c.contract_id = $1
+		ORDER BY c.id
+	`
+
+	if err := h.DB.Select(&connections, query, contractID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(connections)
+}
+
+// @Summary      Заблокировать подключение
+// @Description  Блокирует указанное подключение
+// @Tags         Connections
+// @Produce      json
+// @Param        id   path      int  true  "ID Подключения"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /connections/{id}/block [post]
+// @Security     BearerAuth
+func (h *BillingHandler) BlockConnection(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	res, err := h.DB.Exec("UPDATE connections SET is_blocked = true WHERE id = $1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Connection not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Connection blocked successfully"})
+}
+
+// @Summary      Разблокировать подключение
+// @Description  Разблокирует указанное подключение
+// @Tags         Connections
+// @Produce      json
+// @Param        id   path      int  true  "ID Подключения"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /connections/{id}/unblock [post]
+// @Security     BearerAuth
+func (h *BillingHandler) UnblockConnection(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	res, err := h.DB.Exec("UPDATE connections SET is_blocked = false WHERE id = $1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Connection not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Connection unblocked successfully"})
 }
 
 //================================================================================
@@ -904,8 +1065,10 @@ func (h *BillingHandler) GetTrafficData(w http.ResponseWriter, r *http.Request) 
 			args = append(args, parsedDate)
 			argIndex++
 		} else if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
-			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex)+" + INTERVAL '1 day'")
-			args = append(args, parsedDate)
+			// Добавляем день к дате в Go, а не в SQL
+			endDate := parsedDate.Add(24 * time.Hour)
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex))
+			args = append(args, endDate)
 			argIndex++
 		}
 	}
@@ -965,12 +1128,12 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 	baseQuery := `
 		SELECT 
 			COUNT(*) as total_records,
-			SUM(bytes_in) as total_bytes_in,
-			SUM(bytes_out) as total_bytes_out,
-			SUM(bytes_in + bytes_out) as total_traffic,
-			AVG(bytes_in + bytes_out) as avg_traffic,
-			MAX(bytes_in + bytes_out) as max_traffic,
-			MIN(bytes_in + bytes_out) as min_traffic
+			COALESCE(SUM(bytes_in), 0) as total_bytes_in,
+			COALESCE(SUM(bytes_out), 0) as total_bytes_out,
+			COALESCE(SUM(bytes_in + bytes_out), 0) as total_traffic,
+			COALESCE(AVG(bytes_in + bytes_out), 0) as avg_traffic,
+			COALESCE(MAX(bytes_in + bytes_out), 0) as max_traffic,
+			COALESCE(MIN(bytes_in + bytes_out), 0) as min_traffic
 		FROM traffic t
 	`
 
@@ -992,8 +1155,10 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 
 	if toDate := queryParams.Get("to"); toDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
-			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex)+" + INTERVAL '1 day'")
-			args = append(args, parsedDate)
+			// Добавляем день к дате в Go, а не в SQL
+			endDate := parsedDate.Add(24 * time.Hour)
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex))
+			args = append(args, endDate)
 			argIndex++
 		}
 	}
@@ -1030,4 +1195,938 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// @Summary      Экспорт данных трафика в CSV
+// @Description  Экспортирует данные трафика в CSV формате с возможностью фильтрации
+// @Tags         Traffic
+// @Produce      text/csv
+// @Param        client_id query int false "ID клиента"
+// @Param        ip_address query string false "IP адрес"
+// @Param        from query string false "Дата начала (YYYY-MM-DD HH:MM:SS)"
+// @Param        to query string false "Дата окончания (YYYY-MM-DD HH:MM:SS)"
+// @Success      200  {string}  string "CSV data"
+// @Failure      500  {object}  map[string]string
+// @Router       /traffic/export [get]
+// @Security     BearerAuth
+func (h *BillingHandler) ExportTrafficCSV(w http.ResponseWriter, r *http.Request) {
+	queryParams := r.URL.Query()
+
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 1
+
+	baseQuery := `
+		SELECT 
+			t.id,
+			t.connection_id,
+			t.client_id,
+			COALESCE(cl.first_name || ' ' || cl.last_name, cl.full_name, cl.short_name, cl.email) as client_name,
+			cl.email as client_email,
+			c.ip_address,
+			t.timestamp,
+			t.bytes_in,
+			t.bytes_out,
+			t.packets_in,
+			t.packets_out,
+			(t.bytes_in + t.bytes_out) as total_traffic
+		FROM traffic t
+		LEFT JOIN clients cl ON t.client_id = cl.id
+		LEFT JOIN connections c ON t.connection_id = c.id
+	`
+
+	// Применяем те же фильтры что и в GetTrafficData
+	if clientID := queryParams.Get("client_id"); clientID != "" {
+		if id, err := strconv.Atoi(clientID); err == nil {
+			whereClauses = append(whereClauses, "t.client_id = $"+strconv.Itoa(argIndex))
+			args = append(args, id)
+			argIndex++
+		}
+	}
+
+	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
+		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
+		args = append(args, "%"+ipAddress+"%")
+		argIndex++
+	}
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02 15:04:05", fromDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp >= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		} else if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp >= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02 15:04:05", toDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		} else if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			// Добавляем день к дате в Go, а не в SQL
+			endDate := parsedDate.Add(24 * time.Hour)
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex))
+			args = append(args, endDate)
+			argIndex++
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		baseQuery += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	baseQuery += " ORDER BY t.timestamp DESC"
+
+	var traffic []models.TrafficResponse
+	err := h.DB.Select(&traffic, baseQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to fetch traffic data for export: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Устанавливаем заголовки для CSV
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=traffic_export_"+time.Now().Format("2006-01-02_15-04-05")+".csv")
+
+	// Добавляем BOM для корректного отображения в Excel
+	w.Write([]byte("\xEF\xBB\xBF"))
+
+	// Записываем заголовки CSV
+	csvHeader := "ID,ID Подключения,ID Клиента,Имя Клиента,Email Клиента,IP Адрес,Время,Входящий Трафик (байт),Исходящий Трафик (байт),Входящие Пакеты,Исходящие Пакеты,Общий Трафик (байт)\n"
+	w.Write([]byte(csvHeader))
+
+	// Записываем данные
+	for _, item := range traffic {
+		clientName := item.ClientName
+		if clientName == "" {
+			clientName = "N/A"
+		}
+
+		csvLine := fmt.Sprintf("%d,%d,%d,\"%s\",\"%s\",\"%s\",\"%s\",%d,%d,%d,%d,%d\n",
+			item.ID,
+			item.ConnectionID,
+			item.ClientID,
+			clientName,
+			item.ClientEmail,
+			item.IPAddress,
+			item.Timestamp.Format("2006-01-02 15:04:05"),
+			item.BytesIn,
+			item.BytesOut,
+			item.PacketsIn,
+			item.PacketsOut,
+			item.TotalTraffic,
+		)
+		w.Write([]byte(csvLine))
+	}
+}
+
+// @Summary      Получить статистику по договору
+// @Description  Возвращает детальную статистику трафика по конкретному договору
+// @Tags         Contracts
+// @Produce      json
+// @Param        id path int true "ID договора"
+// @Param        from query string false "Дата начала (YYYY-MM-DD)"
+// @Param        to query string false "Дата окончания (YYYY-MM-DD)"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /contracts/{id}/stats [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetContractStats(w http.ResponseWriter, r *http.Request) {
+	contractID := mux.Vars(r)["id"]
+	queryParams := r.URL.Query()
+
+	// Проверяем существование договора
+	var contractExists bool
+	err := h.DB.Get(&contractExists, "SELECT EXISTS(SELECT 1 FROM contracts WHERE id=$1)", contractID)
+	if err != nil || !contractExists {
+		http.Error(w, "Contract not found", http.StatusNotFound)
+		return
+	}
+
+	var args []interface{}
+	argIndex := 1
+
+	// Основной запрос для статистики по договору
+	baseQuery := `
+		SELECT 
+			COUNT(*) as total_records,
+			COALESCE(SUM(t.bytes_in), 0) as total_bytes_in,
+			COALESCE(SUM(t.bytes_out), 0) as total_bytes_out,
+			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as total_traffic,
+			COALESCE(AVG(t.bytes_in + t.bytes_out), 0) as avg_traffic,
+			COALESCE(MAX(t.bytes_in + t.bytes_out), 0) as max_traffic,
+			COALESCE(MIN(t.bytes_in + t.bytes_out), 0) as min_traffic,
+			COUNT(DISTINCT DATE(t.timestamp)) as active_days
+		FROM traffic t
+		JOIN connections c ON t.connection_id = c.id
+		JOIN contracts ct ON c.contract_id = ct.id
+		WHERE ct.id = $` + strconv.Itoa(argIndex)
+
+	args = append(args, contractID)
+	argIndex++
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			baseQuery += " AND t.timestamp >= $" + strconv.Itoa(argIndex)
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			// Добавляем день к дате в Go, а не в SQL
+			endDate := parsedDate.Add(24 * time.Hour)
+			baseQuery += " AND t.timestamp <= $" + strconv.Itoa(argIndex)
+			args = append(args, endDate)
+			argIndex++
+		}
+	}
+
+	var stats struct {
+		TotalRecords  int     `db:"total_records"`
+		TotalBytesIn  int64   `db:"total_bytes_in"`
+		TotalBytesOut int64   `db:"total_bytes_out"`
+		TotalTraffic  int64   `db:"total_traffic"`
+		AvgTraffic    float64 `db:"avg_traffic"`
+		MaxTraffic    int64   `db:"max_traffic"`
+		MinTraffic    int64   `db:"min_traffic"`
+		ActiveDays    int     `db:"active_days"`
+	}
+
+	err = h.DB.Get(&stats, baseQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to fetch contract stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем информацию о договоре и клиенте
+	contractInfoQuery := `
+		SELECT 
+			ct.id,
+			ct.number,
+			ct.sign_date,
+			ct.is_blocked,
+			cl.id as client_id,
+			COALESCE(cl.first_name || ' ' || cl.last_name, cl.full_name, cl.short_name, cl.email) as client_name,
+			cl.email as client_email,
+			COUNT(c.id) as connections_count
+		FROM contracts ct
+		JOIN clients cl ON ct.client_id = cl.id
+		LEFT JOIN connections c ON ct.id = c.contract_id
+		WHERE ct.id = $1
+		GROUP BY ct.id, ct.number, ct.sign_date, ct.is_blocked, cl.id, cl.first_name, cl.last_name, cl.full_name, cl.short_name, cl.email
+	`
+
+	var contractInfo struct {
+		ID               int       `db:"id"`
+		Number           string    `db:"number"`
+		SignDate         time.Time `db:"sign_date"`
+		IsBlocked        bool      `db:"is_blocked"`
+		ClientID         int       `db:"client_id"`
+		ClientName       string    `db:"client_name"`
+		ClientEmail      string    `db:"client_email"`
+		ConnectionsCount int       `db:"connections_count"`
+	}
+
+	err = h.DB.Get(&contractInfo, contractInfoQuery, contractID)
+	if err != nil {
+		http.Error(w, "Failed to fetch contract info: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем топ дней по трафику
+	topDaysQuery := `
+		SELECT 
+			DATE(t.timestamp) as date,
+			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as daily_traffic
+		FROM traffic t
+		JOIN connections c ON t.connection_id = c.id
+		JOIN contracts ct ON c.contract_id = ct.id
+		WHERE ct.id = $1
+	`
+	topDaysArgs := []interface{}{contractID}
+	argIdx := 2
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			topDaysQuery += " AND t.timestamp >= $" + strconv.Itoa(argIdx)
+			topDaysArgs = append(topDaysArgs, parsedDate)
+			argIdx++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			// Добавляем день к дате в Go, а не в SQL
+			endDate := parsedDate.Add(24 * time.Hour)
+			topDaysQuery += " AND t.timestamp <= $" + strconv.Itoa(argIdx)
+			topDaysArgs = append(topDaysArgs, endDate)
+			argIdx++
+		}
+	}
+
+	topDaysQuery += `
+		GROUP BY DATE(t.timestamp)
+		ORDER BY daily_traffic DESC
+		LIMIT 5
+	`
+
+	var topDays []struct {
+		Date         time.Time `db:"date"`
+		DailyTraffic int64     `db:"daily_traffic"`
+	}
+
+	err = h.DB.Select(&topDays, topDaysQuery, topDaysArgs...)
+	if err != nil {
+		// log.Printf("Error fetching top days: %v", err)
+		topDays = []struct {
+			Date         time.Time `db:"date"`
+			DailyTraffic int64     `db:"daily_traffic"`
+		}{}
+	}
+
+	response := map[string]interface{}{
+		"contract": map[string]interface{}{
+			"id":                contractInfo.ID,
+			"number":            contractInfo.Number,
+			"sign_date":         contractInfo.SignDate.Format("2006-01-02"),
+			"is_blocked":        contractInfo.IsBlocked,
+			"client_id":         contractInfo.ClientID,
+			"client_name":       contractInfo.ClientName,
+			"client_email":      contractInfo.ClientEmail,
+			"connections_count": contractInfo.ConnectionsCount,
+		},
+		"traffic_stats": map[string]interface{}{
+			"total_records":   stats.TotalRecords,
+			"total_bytes_in":  stats.TotalBytesIn,
+			"total_bytes_out": stats.TotalBytesOut,
+			"total_traffic":   stats.TotalTraffic,
+			"avg_traffic":     stats.AvgTraffic,
+			"max_traffic":     stats.MaxTraffic,
+			"min_traffic":     stats.MinTraffic,
+			"active_days":     stats.ActiveDays,
+		},
+		"top_days": topDays,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+//================================================================================
+// CONNECTION STATS
+//================================================================================
+
+// @Summary      Получить статистику по подключению
+// @Description  Возвращает агрегированную статистику трафика по подключению
+// @Tags         Connections
+// @Produce      json
+// @Param        id path string true "ID подключения"
+// @Param        from query string false "Дата начала (YYYY-MM-DD)"
+// @Param        to query string false "Дата окончания (YYYY-MM-DD)"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /connections/{id}/stats [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Request) {
+	connectionID := mux.Vars(r)["id"]
+	queryParams := r.URL.Query()
+
+	// Проверяем существование подключения
+	var connectionExists bool
+	err := h.DB.Get(&connectionExists, "SELECT EXISTS(SELECT 1 FROM connections WHERE id=$1)", connectionID)
+	if err != nil || !connectionExists {
+		http.Error(w, "Connection not found", http.StatusNotFound)
+		return
+	}
+
+	var args []interface{}
+	argIndex := 1
+
+	// Основной запрос для статистики по подключению
+	baseQuery := `
+		SELECT 
+			COUNT(*) as total_records,
+			COALESCE(SUM(t.bytes_in), 0) as total_bytes_in,
+			COALESCE(SUM(t.bytes_out), 0) as total_bytes_out,
+			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as total_traffic,
+			COALESCE(AVG(t.bytes_in + t.bytes_out), 0) as avg_traffic,
+			COALESCE(MAX(t.bytes_in + t.bytes_out), 0) as max_traffic,
+			COALESCE(MIN(t.bytes_in + t.bytes_out), 0) as min_traffic,
+			COUNT(DISTINCT DATE(t.timestamp)) as active_days
+		FROM traffic t
+		WHERE t.connection_id = $` + strconv.Itoa(argIndex)
+
+	args = append(args, connectionID)
+	argIndex++
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			baseQuery += " AND t.timestamp >= $" + strconv.Itoa(argIndex)
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			endDate := parsedDate.Add(24 * time.Hour)
+			baseQuery += " AND t.timestamp <= $" + strconv.Itoa(argIndex)
+			args = append(args, endDate)
+			argIndex++
+		}
+	}
+
+	var stats struct {
+		TotalRecords  int     `db:"total_records"`
+		TotalBytesIn  int64   `db:"total_bytes_in"`
+		TotalBytesOut int64   `db:"total_bytes_out"`
+		TotalTraffic  int64   `db:"total_traffic"`
+		AvgTraffic    float64 `db:"avg_traffic"`
+		MaxTraffic    int64   `db:"max_traffic"`
+		MinTraffic    int64   `db:"min_traffic"`
+		ActiveDays    int     `db:"active_days"`
+	}
+
+	err = h.DB.Get(&stats, baseQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to fetch connection stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем информацию о подключении
+	connectionInfoQuery := `
+		SELECT 
+			c.id,
+			c.address,
+			c.ip_address,
+			c.connection_type,
+			c.is_blocked,
+			ct.id as contract_id,
+			ct.number as contract_number,
+			t.name as tariff_name,
+			e.model as equipment_model,
+			cl.id as client_id,
+			COALESCE(cl.first_name || ' ' || cl.last_name, cl.full_name, cl.short_name, cl.email) as client_name,
+			cl.email as client_email
+		FROM connections c
+		JOIN contracts ct ON c.contract_id = ct.id
+		JOIN clients cl ON ct.client_id = cl.id
+		LEFT JOIN tariffs t ON c.tariff_id = t.id
+		LEFT JOIN equipment e ON c.equipment_id = e.id
+		WHERE c.id = $1
+	`
+
+	var connectionInfo struct {
+		ID             int     `db:"id"`
+		Address        string  `db:"address"`
+		IPAddress      string  `db:"ip_address"`
+		ConnectionType string  `db:"connection_type"`
+		IsBlocked      bool    `db:"is_blocked"`
+		ContractID     int     `db:"contract_id"`
+		ContractNumber string  `db:"contract_number"`
+		TariffName     *string `db:"tariff_name"`
+		EquipmentModel *string `db:"equipment_model"`
+		ClientID       int     `db:"client_id"`
+		ClientName     string  `db:"client_name"`
+		ClientEmail    string  `db:"client_email"`
+	}
+
+	err = h.DB.Get(&connectionInfo, connectionInfoQuery, connectionID)
+	if err != nil {
+		http.Error(w, "Failed to fetch connection info: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем топ дней по трафику для подключения
+	topDaysQuery := `
+		SELECT 
+			DATE(t.timestamp) as date,
+			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as daily_traffic
+		FROM traffic t
+		WHERE t.connection_id = $1
+	`
+	topDaysArgs := []interface{}{connectionID}
+	argIdx := 2
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			topDaysQuery += " AND t.timestamp >= $" + strconv.Itoa(argIdx)
+			topDaysArgs = append(topDaysArgs, parsedDate)
+			argIdx++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			endDate := parsedDate.Add(24 * time.Hour)
+			topDaysQuery += " AND t.timestamp <= $" + strconv.Itoa(argIdx)
+			topDaysArgs = append(topDaysArgs, endDate)
+			argIdx++
+		}
+	}
+
+	topDaysQuery += `
+		GROUP BY DATE(t.timestamp)
+		ORDER BY daily_traffic DESC
+		LIMIT 5
+	`
+
+	var topDays []struct {
+		Date         time.Time `db:"date"`
+		DailyTraffic int64     `db:"daily_traffic"`
+	}
+
+	err = h.DB.Select(&topDays, topDaysQuery, topDaysArgs...)
+	if err != nil {
+		topDays = []struct {
+			Date         time.Time `db:"date"`
+			DailyTraffic int64     `db:"daily_traffic"`
+		}{}
+	}
+
+	tariffName := "Не указан"
+	if connectionInfo.TariffName != nil {
+		tariffName = *connectionInfo.TariffName
+	}
+
+	equipmentModel := "Не указано"
+	if connectionInfo.EquipmentModel != nil {
+		equipmentModel = *connectionInfo.EquipmentModel
+	}
+
+	response := map[string]interface{}{
+		"connection": map[string]interface{}{
+			"id":              connectionInfo.ID,
+			"address":         connectionInfo.Address,
+			"ip_address":      connectionInfo.IPAddress,
+			"connection_type": connectionInfo.ConnectionType,
+			"is_blocked":      connectionInfo.IsBlocked,
+			"contract_id":     connectionInfo.ContractID,
+			"contract_number": connectionInfo.ContractNumber,
+			"tariff_name":     tariffName,
+			"equipment_model": equipmentModel,
+			"client_id":       connectionInfo.ClientID,
+			"client_name":     connectionInfo.ClientName,
+			"client_email":    connectionInfo.ClientEmail,
+		},
+		"traffic_stats": map[string]interface{}{
+			"total_records":   stats.TotalRecords,
+			"total_bytes_in":  stats.TotalBytesIn,
+			"total_bytes_out": stats.TotalBytesOut,
+			"total_traffic":   stats.TotalTraffic,
+			"avg_traffic":     stats.AvgTraffic,
+			"max_traffic":     stats.MaxTraffic,
+			"min_traffic":     stats.MinTraffic,
+			"active_days":     stats.ActiveDays,
+		},
+		"top_days": topDays,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+//================================================================================
+// CRUD: ISSUES (Доработки)
+//================================================================================
+
+// @Summary      Создать задачу
+// @Description  Создает новую задачу в системе доработок
+// @Tags         Issues
+// @Accept       json
+// @Produce      json
+// @Param        issue body models.Issue true "Объект новой задачи"
+// @Success      201  {object}  models.Issue
+// @Failure      400  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /issues [post]
+// @Security     BearerAuth
+func (h *BillingHandler) CreateIssue(w http.ResponseWriter, r *http.Request) {
+	var issue models.Issue
+	if err := json.NewDecoder(r.Body).Decode(&issue); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Если created_by не указан, используем значение по умолчанию (например, 1 - admin)
+	if issue.CreatedBy == 0 {
+		issue.CreatedBy = 1 // TODO: Get from auth context
+	}
+
+	query := `INSERT INTO issues (title, description, status, created_by) VALUES ($1, $2, $3, $4) RETURNING id, created_at`
+	err := h.DB.QueryRowx(query, issue.Title, issue.Description, models.NewIssue, issue.CreatedBy).Scan(&issue.ID, &issue.CreatedAt)
+	if err != nil {
+		http.Error(w, "Could not create issue: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	issue.Status = models.NewIssue
+
+	// Отправляем уведомление в Telegram
+	if h.TelegramService != nil {
+		go h.TelegramService.SendIssueCreated(&issue)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(issue)
+}
+
+// @Summary      Получить список задач
+// @Description  Возвращает список всех задач с возможностью фильтрации по статусу
+// @Tags         Issues
+// @Produce      json
+// @Param        status query string false "Статус задачи (new/resolved)"
+// @Success      200  {array}  models.Issue
+// @Failure      500  {object}  map[string]string
+// @Router       /issues [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetIssues(w http.ResponseWriter, r *http.Request) {
+	queryParams := r.URL.Query()
+
+	baseQuery := "SELECT * FROM issues"
+	var args []interface{}
+
+	if status := queryParams.Get("status"); status != "" {
+		baseQuery += " WHERE status = $1"
+		args = append(args, status)
+	}
+
+	baseQuery += " ORDER BY created_at DESC"
+
+	issues := []models.Issue{}
+	if err := h.DB.Select(&issues, baseQuery, args...); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(issues)
+}
+
+// @Summary      Получить задачу по ID
+// @Description  Возвращает одну задачу по её ID
+// @Tags         Issues
+// @Produce      json
+// @Param        id   path      int  true  "ID Задачи"
+// @Success      200  {object}  models.Issue
+// @Failure      404  {object}  map[string]string
+// @Router       /issues/{id} [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetIssueByID(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	issue := models.Issue{}
+	if err := h.DB.Get(&issue, "SELECT * FROM issues WHERE id=$1", id); err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(issue)
+}
+
+// @Summary      Обновить задачу
+// @Description  Обновляет данные задачи по ID
+// @Tags         Issues
+// @Accept       json
+// @Param        id    path      int           true  "ID Задачи"
+// @Param        issue body      models.Issue  true  "Обновленные данные"
+// @Success      200   {string}  string "OK"
+// @Failure      404   {object}  map[string]string
+// @Router       /issues/{id} [put]
+// @Security     BearerAuth
+func (h *BillingHandler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	var updatedIssue models.Issue
+	if err := json.NewDecoder(r.Body).Decode(&updatedIssue); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Получаем текущие данные задачи для сравнения
+	var currentIssue models.Issue
+	err := h.DB.Get(&currentIssue, "SELECT * FROM issues WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	// Запрещаем редактирование решенных задач
+	if currentIssue.Status == models.ResolvedIssue {
+		http.Error(w, "Cannot edit resolved issues", http.StatusBadRequest)
+		return
+	}
+
+	// Начинаем транзакцию для обновления задачи и записи истории
+	tx, err := h.DB.Beginx()
+	if err != nil {
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Обновляем задачу
+	updateQuery := `UPDATE issues SET title=$1, description=$2 WHERE id=$3`
+	res, err := tx.Exec(updateQuery, updatedIssue.Title, updatedIssue.Description, id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Issue not found or not updated", http.StatusNotFound)
+		return
+	}
+
+	// Записываем историю изменений
+	editedBy := 1 // TODO: Get from auth context
+
+	// Проверяем изменения в заголовке
+	if currentIssue.Title != updatedIssue.Title {
+		_, err = tx.Exec(`INSERT INTO issue_history (issue_id, field_name, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)`,
+			id, "title", currentIssue.Title, updatedIssue.Title, editedBy)
+		if err != nil {
+			http.Error(w, "Failed to save title change history", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Проверяем изменения в описании
+	if currentIssue.Description != updatedIssue.Description {
+		_, err = tx.Exec(`INSERT INTO issue_history (issue_id, field_name, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)`,
+			id, "description", currentIssue.Description, updatedIssue.Description, editedBy)
+		if err != nil {
+			http.Error(w, "Failed to save description change history", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Коммитим транзакцию
+	if err = tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
+		return
+	}
+
+	// Отправляем уведомление в Telegram о изменениях
+	if h.TelegramService != nil {
+		changes := []string{}
+		if currentIssue.Title != updatedIssue.Title {
+			changes = append(changes, fmt.Sprintf("Название: %s → %s", currentIssue.Title, updatedIssue.Title))
+		}
+		if currentIssue.Description != updatedIssue.Description {
+			changes = append(changes, fmt.Sprintf("Описание изменено"))
+		}
+		if len(changes) > 0 {
+			go h.TelegramService.SendIssueUpdated(&currentIssue, &updatedIssue, changes)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// @Summary      Решить задачу
+// @Description  Отмечает задачу как решенную и устанавливает время решения
+// @Tags         Issues
+// @Accept       json
+// @Param        id   path      int  true  "ID Задачи"
+// @Param        resolved_by body object{resolved_by=int} true "ID пользователя, решившего задачу"
+// @Success      200  {string}  string "OK"
+// @Failure      404  {object}  map[string]string
+// @Router       /issues/{id}/resolve [post]
+// @Security     BearerAuth
+func (h *BillingHandler) ResolveIssue(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	var payload struct {
+		ResolvedBy int `json:"resolved_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Сначала получаем данные задачи для уведомления
+	var issue models.Issue
+	err := h.DB.Get(&issue, "SELECT * FROM issues WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	query := `UPDATE issues SET status=$1, resolved_at=NOW(), resolved_by=$2 WHERE id=$3 AND status='new'`
+	res, err := h.DB.Exec(query, models.ResolvedIssue, payload.ResolvedBy, id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Issue not found or already resolved", http.StatusNotFound)
+		return
+	}
+
+	// Обновляем issue структуру для уведомления
+	issue.Status = models.ResolvedIssue
+	issue.ResolvedBy = &payload.ResolvedBy
+
+	// Отправляем уведомление в Telegram
+	if h.TelegramService != nil {
+		go h.TelegramService.SendIssueResolved(&issue)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// @Summary      Вернуть задачу в статус "новая"
+// @Description  Возвращает решенную задачу обратно в статус "новая" с логированием
+// @Tags         Issues
+// @Accept       json
+// @Produce      json
+// @Param        id   path      int  true  "ID Задачи"
+// @Param        payload body object{unresolve_reason:string,unresolve_by:int} true "Причина возврата и ID пользователя"
+// @Success      200  {string}  string "OK"
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Router       /issues/{id}/unresolve [post]
+// @Security     BearerAuth
+func (h *BillingHandler) UnresolveIssue(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	var payload struct {
+		UnresolveReason string `json:"unresolve_reason"`
+		UnresolveBy     int    `json:"unresolve_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Получаем текущие данные задачи
+	var issue models.Issue
+	err := h.DB.Get(&issue, "SELECT * FROM issues WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	// Проверяем, что задача действительно решена
+	if issue.Status != models.ResolvedIssue {
+		http.Error(w, "Issue is not resolved", http.StatusBadRequest)
+		return
+	}
+
+	// Начинаем транзакцию
+	tx, err := h.DB.Beginx()
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Обновляем статус задачи
+	query := `UPDATE issues SET status=$1, resolved_at=NULL, resolved_by=NULL WHERE id=$2 AND status='resolved'`
+	res, err := tx.Exec(query, models.NewIssue, id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Issue not found or not resolved", http.StatusNotFound)
+		return
+	}
+
+	// Записываем в историю изменений
+	historyQuery := `INSERT INTO issue_history (issue_id, field_name, old_value, new_value, edited_by) VALUES ($1, $2, $3, $4, $5)`
+	reasonText := fmt.Sprintf("new (возврат в работу: %s)", payload.UnresolveReason)
+	_, err = tx.Exec(historyQuery, id, "status", "resolved", reasonText, payload.UnresolveBy)
+	if err != nil {
+		http.Error(w, "Failed to log history", http.StatusInternalServerError)
+		return
+	}
+
+	// Коммитим транзакцию
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	// Обновляем структуру для уведомления
+	issue.Status = models.NewIssue
+	issue.ResolvedBy = nil
+	issue.ResolvedAt = nil
+
+	// Отправляем уведомление в Telegram
+	if h.TelegramService != nil {
+		go h.TelegramService.SendIssueUnresolved(&issue, payload.UnresolveReason)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// @Summary      Удалить задачу
+// @Description  Удаляет задачу по ID
+// @Tags         Issues
+// @Param        id   path      int  true  "ID Задачи"
+// @Success      204  {string}  string "No Content"
+// @Failure      404  {object}  map[string]string
+// @Router       /issues/{id} [delete]
+// @Security     BearerAuth
+func (h *BillingHandler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	// Сначала получаем данные задачи для уведомления
+	var issue models.Issue
+	err := h.DB.Get(&issue, "SELECT * FROM issues WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	res, err := h.DB.Exec("DELETE FROM issues WHERE id=$1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	// Отправляем уведомление в Telegram
+	if h.TelegramService != nil {
+		go h.TelegramService.SendIssueDeleted(&issue)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary      Получить историю изменений задачи
+// @Description  Возвращает историю всех изменений задачи по её ID
+// @Tags         Issues
+// @Produce      json
+// @Param        id   path      int  true  "ID Задачи"
+// @Success      200  {array}  models.IssueHistory
+// @Failure      404  {object}  map[string]string
+// @Router       /issues/{id}/history [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetIssueHistory(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	// Проверяем, существует ли задача
+	var issueExists bool
+	err := h.DB.Get(&issueExists, "SELECT EXISTS(SELECT 1 FROM issues WHERE id=$1)", id)
+	if err != nil || !issueExists {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	// Получаем историю изменений с информацией о пользователях
+	query := `
+		SELECT 
+			ih.id, ih.issue_id, ih.field_name, ih.old_value, ih.new_value, 
+			ih.edited_by, ih.edited_at
+		FROM issue_history ih
+		WHERE ih.issue_id = $1
+		ORDER BY ih.edited_at DESC
+	`
+
+	var history []models.IssueHistory
+	err = h.DB.Select(&history, query, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch issue history: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
 }

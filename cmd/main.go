@@ -12,6 +12,7 @@ import (
 	"new-billing/internal/database"
 	"new-billing/internal/models"
 	"new-billing/internal/service"
+	"new-billing/internal/telegram"
 
 	"github.com/gorilla/mux"
 
@@ -29,18 +30,23 @@ func main() {
 	db := database.Connect(cfg.Database)
 	database.Migrate(db)
 
-	// Заполняем тестовые данные при первом запуске
+	// Заполняем базовые данные при первом запуске
 	database.SeedBasicData(db)
-	database.SeedTestData(db)
+
+	// Трафик теперь будет обрабатываться реально через функцию ProcessIPTraffic
+	// в зависимости от ваших NetFlow данных
 
 	flowService := service.NewFlowService(db, &cfg.Nfcapd)
 	go flowService.StartProcessing()
 
 	r := mux.NewRouter()
 
+	// --- Инициализация сервисов ---
+	telegramService := telegram.NewTelegramService(&cfg.Telegram)
+
 	// --- Инициализация обработчиков ---
 	authHandler := &api.AuthHandler{DB: db, Cfg: cfg}
-	billingHandler := &api.BillingHandler{DB: db}
+	billingHandler := &api.BillingHandler{DB: db, TelegramService: telegramService}
 	netflowHandler := api.NewAPIHandler(db)
 
 	// --- SWAGGER ROUTE ---
@@ -100,10 +106,31 @@ func main() {
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.GetConnectionByID).Methods("GET")
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.UpdateConnection).Methods("PUT")
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.DeleteConnection).Methods("DELETE")
+	managerRouter.HandleFunc("/connections/{id:[0-9]+}/block", billingHandler.BlockConnection).Methods("POST")
+	managerRouter.HandleFunc("/connections/{id:[0-9]+}/unblock", billingHandler.UnblockConnection).Methods("POST")
+
+	// Подключения по договору
+	managerRouter.HandleFunc("/contracts/{contract_id:[0-9]+}/connections", billingHandler.GetConnectionsByContract).Methods("GET")
 
 	// Дашборд трафика
 	managerRouter.HandleFunc("/traffic", billingHandler.GetTrafficData).Methods("GET")
 	managerRouter.HandleFunc("/traffic/stats", billingHandler.GetTrafficStats).Methods("GET")
+	managerRouter.HandleFunc("/traffic/export", billingHandler.ExportTrafficCSV).Methods("GET")
+
+	// Статистика по договорам
+	managerRouter.HandleFunc("/contracts/{id:[0-9]+}/stats", billingHandler.GetContractStats).Methods("GET")
+	// Статистика по подключениям
+	managerRouter.HandleFunc("/connections/{id:[0-9]+}/stats", billingHandler.GetConnectionStats).Methods("GET")
+
+	// CRUD для Доработок/Issues
+	managerRouter.HandleFunc("/issues", billingHandler.GetIssues).Methods("GET")
+	managerRouter.HandleFunc("/issues", billingHandler.CreateIssue).Methods("POST")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}", billingHandler.GetIssueByID).Methods("GET")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}", billingHandler.UpdateIssue).Methods("PUT")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}", billingHandler.DeleteIssue).Methods("DELETE")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}/resolve", billingHandler.ResolveIssue).Methods("POST")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}/unresolve", billingHandler.UnresolveIssue).Methods("POST")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}/history", billingHandler.GetIssueHistory).Methods("GET")
 
 	// --- Роуты только для Админов ---
 	adminRouter := apiRouter.PathPrefix("").Subrouter()
