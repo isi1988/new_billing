@@ -13,6 +13,7 @@ import TrafficDashboard from "../views/TrafficDashboard.vue";
 import ContractStats from "../views/ContractStats.vue";
 import ConnectionStats from "../views/ConnectionStats.vue";
 import IssueManagement from "../views/IssueManagement.vue";
+import SystemSettings from "../views/SystemSettings.vue";
 
 const routes = [
     // --- Основные маршруты ---
@@ -99,6 +100,13 @@ const routes = [
       path: '/issues',
       name: 'IssueManagement',
       component: IssueManagement,
+      meta: { requiresAuth: true },
+    },
+    {
+      // Настройки системы
+      path: '/settings',
+      name: 'SystemSettings',
+      component: SystemSettings,
       meta: { requiresAuth: true },
     },
 ];

@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import AppHeader from '@/components/AppHeader.vue';
 import SideDrawer from '@/components/SideDrawer.vue';
+import ErrorNotification from '@/components/ui/ErrorNotification.vue';
 
 const isDrawerOpen = ref(false);
 </script>
@@ -16,6 +17,9 @@ const isDrawerOpen = ref(false);
         <router-view />
       </div>
     </main>
+
+    <!-- Global error notifications -->
+    <ErrorNotification />
   </div>
 </template>
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,12 +69,38 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * limit
 
-	// Добавляем поддержку фильтрации по датам
+	// Добавляем поддержку фильтрации по датам и сетям
 	var whereClauses []string
 	var args []interface{}
-	argIndex := 2 // $1 используется для IP-адреса в двух местах
+	argIndex := 1
 	
-	whereClauses = append(whereClauses, "(src_ip = $1 OR dst_ip = $1)")
+	// Определяем тип фильтрации по IP
+	var ipClause string
+	if strings.Contains(ipAddress, "/") {
+		// CIDR notation (e.g., 192.168.1.0/24)
+		_, ipNet, err := net.ParseCIDR(ipAddress)
+		if err != nil {
+			http.Error(w, "Invalid CIDR notation: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Используем PostgreSQL оператор << для проверки вхождения в сеть
+		ipClause = "(src_ip << $" + strconv.Itoa(argIndex) + " OR dst_ip << $" + strconv.Itoa(argIndex) + ")"
+		args = append(args, ipNet.String())
+		argIndex++
+	} else if strings.Contains(ipAddress, "*") {
+		// Wildcard notation (e.g., 192.168.1.*)
+		likePattern := strings.ReplaceAll(ipAddress, "*", "%")
+		ipClause = "(src_ip LIKE $" + strconv.Itoa(argIndex) + " OR dst_ip LIKE $" + strconv.Itoa(argIndex) + ")"
+		args = append(args, likePattern)
+		argIndex++
+	} else {
+		// Точное совпадение IP
+		ipClause = "(src_ip = $" + strconv.Itoa(argIndex) + " OR dst_ip = $" + strconv.Itoa(argIndex) + ")"
+		args = append(args, ipAddress)
+		argIndex++
+	}
+	
+	whereClauses = append(whereClauses, ipClause)
 	
 	if fromDate := r.URL.Query().Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
@@ -102,8 +129,7 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	`, whereClause)
 	
 	var totalRecords int
-	countArgs := append([]interface{}{ipAddress}, args...)
-	err := h.db.Get(&totalRecords, countQuery, countArgs...)
+	err := h.db.Get(&totalRecords, countQuery, args...)
 	if err != nil {
 		log.Printf("Error counting flows: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -113,18 +139,16 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	// Получаем статистику (общие суммы)
 	statsQuery := fmt.Sprintf(`
 		SELECT 
-			COALESCE(SUM(CASE WHEN dst_ip = $1 THEN bytes ELSE 0 END), 0) as total_bytes_in,
-			COALESCE(SUM(CASE WHEN src_ip = $1 THEN bytes ELSE 0 END), 0) as total_bytes_out
+			COALESCE(SUM(bytes), 0) as total_bytes
 		FROM flows 
 		%s
 	`, whereClause)
 	
 	var stats struct {
-		TotalBytesIn  int64 `db:"total_bytes_in"`
-		TotalBytesOut int64 `db:"total_bytes_out"`
+		TotalBytes int64 `db:"total_bytes"`
 	}
 	
-	err = h.db.Get(&stats, statsQuery, countArgs...)
+	err = h.db.Get(&stats, statsQuery, args...)
 	if err != nil {
 		log.Printf("Error getting flow statistics: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -140,7 +164,7 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 		LIMIT $%d OFFSET $%d
 	`, whereClause, argIndex, argIndex+1)
 	
-	flowArgs := append(countArgs, limit, offset)
+	flowArgs := append(args, limit, offset)
 	var flowsFromDB []FlowRecord
 	err = h.db.Select(&flowsFromDB, flowQuery, flowArgs...)
 	if err != nil {
@@ -152,13 +176,19 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	// Определяем направление трафика и заполняем поля
 	var flows []FlowRecord
 	for _, flow := range flowsFromDB {
-		if flow.DstIP == ipAddress {
-			// Входящий трафик
+		// Для сетевых масок и wildcard поиска сложнее определить направление,
+		// поэтому просто помечаем как mixed если это не точное совпадение IP
+		if strings.Contains(ipAddress, "/") || strings.Contains(ipAddress, "*") {
+			flow.Direction = "mixed"
+			flow.BytesIn = flow.Bytes / 2  // Примерное разделение
+			flow.BytesOut = flow.Bytes / 2
+		} else if flow.DstIP == ipAddress {
+			// Входящий трафик (точное совпадение)
 			flow.Direction = "incoming"
 			flow.BytesIn = flow.Bytes
 			flow.BytesOut = 0
 		} else {
-			// Исходящий трафик  
+			// Исходящий трафик (точное совпадение)
 			flow.Direction = "outgoing"
 			flow.BytesIn = 0
 			flow.BytesOut = flow.Bytes
@@ -171,9 +201,9 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	result := FlowSearchResult{
 		Flows:         flows,
 		TotalRecords:  totalRecords,
-		TotalBytesIn:  stats.TotalBytesIn,
-		TotalBytesOut: stats.TotalBytesOut,
-		TotalTraffic:  stats.TotalBytesIn + stats.TotalBytesOut,
+		TotalBytesIn:  stats.TotalBytes / 2, // Примерное разделение для сетей
+		TotalBytesOut: stats.TotalBytes / 2,
+		TotalTraffic:  stats.TotalBytes,
 		Page:          page,
 		Limit:         limit,
 		TotalPages:    totalPages,

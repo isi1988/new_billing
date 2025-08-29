@@ -177,6 +177,19 @@ func Migrate(db *sqlx.DB) {
 	CREATE INDEX IF NOT EXISTS idx_issue_history_issue_id ON issue_history(issue_id);
 	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_at ON issue_history(edited_at);
 	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_by ON issue_history(edited_by);
+	
+	-- Таблица для хранения соответствий IP адресов и хостов
+	CREATE TABLE IF NOT EXISTS ip_hostnames (
+		id SERIAL PRIMARY KEY,
+		ip_address VARCHAR(45) UNIQUE NOT NULL,
+		hostname VARCHAR(255) NOT NULL,
+		resolved_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+		updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+	);
+	
+	-- Создаем индексы для таблицы ip_hostnames
+	CREATE INDEX IF NOT EXISTS idx_ip_hostnames_ip ON ip_hostnames(ip_address);
+	CREATE INDEX IF NOT EXISTS idx_ip_hostnames_updated_at ON ip_hostnames(updated_at);
 	`
 	// MustExec выполняет запрос и паникует в случае ошибки.
 	// Это допустимо при старте приложения, так как без корректной схемы оно не может работать.

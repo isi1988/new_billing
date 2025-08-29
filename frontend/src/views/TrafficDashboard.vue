@@ -35,13 +35,16 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">IP Адрес</label>
+            <label class="form-label">IP Адрес или сеть</label>
             <input 
               v-model="filters.ipAddress"
               type="text"
               class="form-control"
-              placeholder="192.168.1.1"
+              placeholder="192.168.1.1 или 192.168.1.0/24 или 192.168.1.*"
             />
+            <small class="form-text">
+              Поддерживается: точный IP, CIDR (192.168.1.0/24), маска с * (192.168.1.*)
+            </small>
           </div>
           <div class="form-group">
             <label class="form-label">Дата с</label>
@@ -156,14 +159,14 @@
               <td class="text-gray-900">{{ formatDateTime(item.timestamp) }}</td>
               <td class="text-gray-700">
                 <div class="flow-endpoint">
-                  <div class="font-medium">{{ item.src_ip }}</div>
-                  <div class="text-xs text-gray-500">{{ item.src_port }}</div>
+                  <IPDisplay :ip="item.src_ip" />
+                  <div class="text-xs text-gray-500 mt-1">Порт: {{ item.src_port }}</div>
                 </div>
               </td>
               <td class="text-gray-700">
                 <div class="flow-endpoint">
-                  <div class="font-medium">{{ item.dst_ip }}</div>
-                  <div class="text-xs text-gray-500">{{ item.dst_port }}</div>
+                  <IPDisplay :ip="item.dst_ip" />
+                  <div class="text-xs text-gray-500 mt-1">Порт: {{ item.dst_port }}</div>
                 </div>
               </td>
               <td class="text-gray-600">{{ getProtocolName(item.protocol) }}</td>
@@ -224,9 +227,13 @@
 <script>
 import { ref, reactive, computed, onMounted } from 'vue';
 import apiClient from '../api/client';
+import IPDisplay from '../components/ui/IPDisplay.vue';
 
 export default {
   name: 'TrafficDashboard',
+  components: {
+    IPDisplay
+  },
   setup() {
     const traffic = ref([]);
     const stats = ref(null);
@@ -291,13 +298,21 @@ export default {
     };
 
     const getDirectionLabel = (direction) => {
-      return direction === 'incoming' ? 'Входящий' : 'Исходящий';
+      switch (direction) {
+        case 'incoming': return 'Входящий';
+        case 'outgoing': return 'Исходящий';
+        case 'mixed': return 'Смешанный';
+        default: return 'Неизвестно';
+      }
     };
 
     const getDirectionClass = (direction) => {
-      return direction === 'incoming' 
-        ? 'direction-badge incoming' 
-        : 'direction-badge outgoing';
+      switch (direction) {
+        case 'incoming': return 'direction-badge incoming';
+        case 'outgoing': return 'direction-badge outgoing';
+        case 'mixed': return 'direction-badge mixed';
+        default: return 'direction-badge';
+      }
     };
 
     const buildQueryParams = () => {
@@ -712,5 +727,17 @@ export default {
 .direction-badge.outgoing {
   background-color: #fef3c7;
   color: #92400e;
+}
+
+.direction-badge.mixed {
+  background-color: #f3e8ff;
+  color: #7c3aed;
+}
+
+.form-text {
+  font-size: 0.75rem;
+  color: var(--gray-600);
+  margin-top: 0.25rem;
+  display: block;
 }
 </style>

@@ -10,6 +10,7 @@ import (
 	"new-billing/internal/api"
 	"new-billing/internal/config"
 	"new-billing/internal/database"
+	"new-billing/internal/hostname"
 	"new-billing/internal/models"
 	"new-billing/internal/service"
 	"new-billing/internal/telegram"
@@ -38,6 +39,10 @@ func main() {
 
 	flowService := service.NewFlowService(db, &cfg.Nfcapd)
 	go flowService.StartProcessing()
+	
+	// Запускаем воркер для резолвинга IP адресов
+	hostnameWorker := hostname.NewHostnameWorker(db)
+	go hostnameWorker.StartWorker()
 
 	r := mux.NewRouter()
 
@@ -46,7 +51,7 @@ func main() {
 
 	// --- Инициализация обработчиков ---
 	authHandler := &api.AuthHandler{DB: db, Cfg: cfg}
-	billingHandler := &api.BillingHandler{DB: db, TelegramService: telegramService}
+	billingHandler := &api.BillingHandler{DB: db, TelegramService: telegramService, HostnameWorker: hostnameWorker}
 	netflowHandler := api.NewAPIHandler(db)
 
 	// --- SWAGGER ROUTE ---
@@ -125,6 +130,12 @@ func main() {
 	managerRouter.HandleFunc("/contracts/{id:[0-9]+}/stats", billingHandler.GetContractStats).Methods("GET")
 	// Статистика по подключениям
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}/stats", billingHandler.GetConnectionStats).Methods("GET")
+	
+	// Системная информация
+	managerRouter.HandleFunc("/system/info", billingHandler.GetSystemInfo).Methods("GET")
+	
+	// Информация об IP адресах
+	managerRouter.HandleFunc("/ip/{ip}/info", billingHandler.GetIPInfo).Methods("GET")
 
 	// CRUD для Доработок/Issues
 	managerRouter.HandleFunc("/issues", billingHandler.GetIssues).Methods("GET")

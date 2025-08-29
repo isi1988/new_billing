@@ -5,6 +5,7 @@ import { useCrud } from '@/composables/useCrud';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import ContractForm from '@/components/forms/ContractForm.vue';
+import ConnectionForm from '@/components/forms/ConnectionForm.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
 import apiClient from '@/api/client';
@@ -22,10 +23,15 @@ const {
   deleteItem
 } = useCrud('contracts');
 
-// Состояние для управления модальным окном
+// Состояние для управления модальным окном договоров
 const isModalOpen = ref(false);
 const currentContract = ref(null);
 const isEditMode = ref(false);
+
+// Состояние для управления модальным окном подключений
+const showConnectionModal = ref(false);
+const currentConnection = ref(null);
+const isConnectionEditMode = ref(false);
 
 // Состояние для расширяемых подключений
 const expandedContracts = ref(new Set());
@@ -141,6 +147,27 @@ async function handleSave(contractData) {
   }
 }
 
+// Обработка сохранения подключения
+async function handleConnectionSave(connectionData) {
+  try {
+    if (isConnectionEditMode.value) {
+      await apiClient.put(`/connections/${connectionData.id}`, connectionData);
+    } else {
+      await apiClient.post('/connections', connectionData);
+    }
+    showConnectionModal.value = false;
+    currentConnection.value = null;
+    
+    // Обновляем список подключений для соответствующего договора
+    if (connectionData.contract_id) {
+      await refreshConnections(connectionData.contract_id);
+    }
+  } catch (error) {
+    console.error('Ошибка сохранения подключения:', error);
+    alert('Не удалось сохранить подключение.');
+  }
+}
+
 // Обработка удаления
 async function handleDelete(itemId) {
   if (confirm('Вы уверены, что хотите удалить этот договор? Это также удалит все связанные с ним подключения.')) {
@@ -217,16 +244,19 @@ async function handleConnectionBlock(connection, contractId) {
 
 // Функции для управления подключениями
 function createConnection(contract) {
-  // Переходим к странице создания подключения с предзаполненным contract_id
-  router.push({
-    path: '/connections',
-    query: {
-      create: 'true',
-      contract_id: contract.id,
-      contract_number: contract.number,
-      return_to: 'contracts'
-    }
-  });
+  // Открываем модальное окно создания подключения с предзаполненным contract_id
+  currentConnection.value = {
+    contract_id: contract.id,
+    address: '',
+    connection_type: '',
+    ip_address: '',
+    mask: 24,
+    equipment_id: null,
+    tariff_id: null,
+    is_blocked: false
+  };
+  isConnectionEditMode.value = false;
+  showConnectionModal.value = true;
 }
 
 function editConnection(connection) {
@@ -309,7 +339,7 @@ function clearFilters() {
           :class="{ 'expanded': expandedContracts.has(item.id) }"
         >
           <span class="count">{{ item.connections_count || '0' }}</span>
-          <span class="material-icons toggle-icon">{{ expandedContracts.has(item.id) ? 'expand_less' : 'expand_more' }}</span>
+          <span class="material-icons icon-sm toggle-icon">{{ expandedContracts.has(item.id) ? 'expand_less' : 'expand_more' }}</span>
         </button>
       </template>
       
@@ -334,20 +364,20 @@ function clearFilters() {
       <template v-for="item in filteredContracts" :key="item.id" #[`expand-${item.id}`]>
         <div v-if="expandedContracts.has(item.id)" class="connections-expanded">
           <div v-if="loadingConnections.has(item.id)" class="loading">
-            <span class="material-icons">hourglass_empty</span>
+            <span class="material-icons icon-sm">hourglass_empty</span>
             Загрузка подключений...
           </div>
           <div v-else-if="contractConnections[item.id]?.length === 0" class="no-connections">
             <p>Нет подключений</p>
             <button @click.stop="createConnection(item)" class="btn btn-sm btn-primary">
-              <span class="material-icons">add</span> Добавить
+              <span class="material-icons icon-sm">add</span> Добавить
             </button>
           </div>
           <div v-else class="connections-list">
             <div class="connections-header">
               <strong>Подключения ({{ contractConnections[item.id]?.length || 0 }})</strong>
-              <button @click.stop="createConnection(item)" class="btn btn-xs btn-primary">
-                <span class="material-icons">add</span> Добавить
+              <button @click.stop="createConnection(item)" class="btn btn-sm btn-primary">
+                <span class="material-icons icon-sm">add</span> Добавить
               </button>
             </div>
             <div v-for="connection in contractConnections[item.id]" :key="connection.id" class="connection-item">
@@ -365,17 +395,17 @@ function clearFilters() {
               <div class="connection-actions">
                 <button 
                   @click.stop="editConnection(connection)"
-                  class="btn btn-icon btn-xs edit-btn"
+                  class="btn btn-icon btn-sm edit-btn"
                   title="Редактировать"
                 >
-                  <span class="material-icons">edit</span>
+                  <span class="material-icons icon-sm">edit</span>
                 </button>
                 <button 
                   @click.stop="handleConnectionBlock(connection, item.id)" 
-                  :class="['btn btn-icon btn-xs', connection.is_blocked ? 'unblock-btn' : 'block-btn']"
+                  :class="['btn btn-icon btn-sm', connection.is_blocked ? 'unblock-btn' : 'block-btn']"
                   :title="connection.is_blocked ? 'Разблокировать' : 'Заблокировать'"
                 >
-                  <span class="material-icons">{{ connection.is_blocked ? 'lock_open' : 'lock' }}</span>
+                  <span class="material-icons icon-sm">{{ connection.is_blocked ? 'lock_open' : 'lock' }}</span>
                 </button>
               </div>
             </div>
@@ -398,6 +428,20 @@ function clearFilters() {
           :initial-data="currentContract"
           @save="handleSave"
           @cancel="isModalOpen = false"
+      />
+    </Modal>
+
+    <!-- Connection Modal -->
+    <Modal :is-open="showConnectionModal" @close="showConnectionModal = false">
+      <template #header>
+        <h2>{{ isConnectionEditMode ? 'Редактировать подключение' : 'Новое подключение' }}</h2>
+      </template>
+
+      <ConnectionForm
+        v-if="showConnectionModal"
+        :initial-data="currentConnection"
+        @save="handleConnectionSave"
+        @cancel="showConnectionModal = false"
       />
     </Modal>
 

@@ -221,3 +221,12 @@ type IssueWithHistory struct {
 	Issue
 	History []IssueHistory `json:"history,omitempty"`
 }
+
+// Hostname resolution models
+type IPHostname struct {
+	ID         int       `json:"id" db:"id"`
+	IPAddress  string    `json:"ip_address" db:"ip_address"`
+	Hostname   string    `json:"hostname" db:"hostname"`
+	ResolvedAt time.Time `json:"resolved_at" db:"resolved_at"`
+	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
+}

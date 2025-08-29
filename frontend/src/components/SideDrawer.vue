@@ -14,6 +14,7 @@ const navLinks = [
   { name: 'Оборудование', path: '/equipment' },
   { name: 'Пользователи', path: '/users' },
   { name: 'Доработки', path: '/issues' },
+  { name: 'Настройки системы', path: '/settings' },
 ];
 </script>
 

@@ -309,20 +309,20 @@ function clearFilters() {
       <template v-for="item in filteredClients" :key="item.id" #[`expand-${item.id}`]>
         <div v-if="expandedClients.has(item.id)" class="contracts-expanded">
           <div v-if="loadingContracts.has(item.id)" class="loading">
-            <span class="material-icons">hourglass_empty</span>
+            <span class="material-icons icon-sm">hourglass_empty</span>
             Загрузка договоров...
           </div>
           <div v-else-if="clientContracts[item.id]?.length === 0" class="no-contracts">
             <p>Нет договоров</p>
             <button @click.stop="createContract(item)" class="btn btn-sm btn-primary">
-              <span class="material-icons">add</span> Добавить
+              <span class="material-icons icon-sm">add</span> Добавить
             </button>
           </div>
           <div v-else class="contracts-list">
             <div class="contracts-header">
               <strong>Договоры ({{ clientContracts[item.id]?.length || 0 }})</strong>
-              <button @click.stop="createContract(item)" class="btn btn-xs btn-primary">
-                <span class="material-icons">add</span> Добавить
+              <button @click.stop="createContract(item)" class="btn btn-sm btn-primary">
+                <span class="material-icons icon-sm">add</span> Добавить
               </button>
             </div>
             <div v-for="contract in clientContracts[item.id]" :key="contract.id" class="contract-item">
@@ -339,17 +339,17 @@ function clearFilters() {
               <div class="contract-actions">
                 <button 
                   @click.stop="editContract(contract)"
-                  class="btn btn-icon btn-xs edit-btn"
+                  class="btn btn-icon btn-sm edit-btn"
                   title="Редактировать"
                 >
-                  <span class="material-icons">edit</span>
+                  <span class="material-icons icon-sm">edit</span>
                 </button>
                 <button 
                   @click.stop="handleContractBlock(contract, item.id)" 
-                  :class="['btn btn-icon btn-xs', contract.is_blocked ? 'unblock-btn' : 'block-btn']"
+                  :class="['btn btn-icon btn-sm', contract.is_blocked ? 'unblock-btn' : 'block-btn']"
                   :title="contract.is_blocked ? 'Разблокировать' : 'Заблокировать'"
                 >
-                  <span class="material-icons">{{ contract.is_blocked ? 'lock_open' : 'lock' }}</span>
+                  <span class="material-icons icon-sm">{{ contract.is_blocked ? 'lock_open' : 'lock' }}</span>
                 </button>
               </div>
             </div>

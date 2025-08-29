@@ -98,13 +98,44 @@ function hideClientDropdown() {
 onMounted(fetchClients);
 
 function handleSubmit() {
-  // Преобразуем ID клиента в число, дату оставляем в формате YYYY-MM-DD
+  // Валидация клиента
+  if (!form.value.client_id) {
+    alert('Пожалуйста, выберите клиента');
+    return;
+  }
+  
+  const clientId = parseInt(form.value.client_id, 10);
+  if (isNaN(clientId) || clientId <= 0) {
+    alert('Некорректный ID клиента');
+    return;
+  }
+  
+  // Проверяем, что выбранный клиент существует в списке
+  const selectedClient = clients.value.find(c => c.id === clientId);
+  if (!selectedClient) {
+    alert('Выбранный клиент не найден в списке');
+    return;
+  }
+  
+  // Валидация номера договора
+  if (!form.value.number || !form.value.number.trim()) {
+    alert('Пожалуйста, введите номер договора');
+    return;
+  }
+  
+  // Валидация даты
+  if (!form.value.sign_date) {
+    alert('Пожалуйста, укажите дату подписания');
+    return;
+  }
+  
+  // Преобразуем данные для отправки
   const dataToSave = {
     ...form.value,
-    client_id: parseInt(form.value.client_id, 10),
-    // Оставляем дату в формате YYYY-MM-DD для нашего CustomDate
-    sign_date: form.value.sign_date || null,
+    client_id: clientId,
+    sign_date: form.value.sign_date,
   };
+  
   emit('save', dataToSave);
 }
 </script>

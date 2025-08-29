@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"new-billing/internal/hostname"
 	"new-billing/internal/models"
 	"new-billing/internal/telegram"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 type BillingHandler struct {
 	DB              *sqlx.DB
 	TelegramService *telegram.TelegramService
+	HostnameWorker  *hostname.HostnameWorker
 }
 
 // --- Хелпер для получения количества измененных строк ---
@@ -540,8 +542,21 @@ func (h *BillingHandler) CreateContract(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	
+	// Проверяем существование клиента перед созданием договора
+	var clientExists bool
+	err := h.DB.Get(&clientExists, "SELECT EXISTS(SELECT 1 FROM clients WHERE id = $1)", contract.ClientID)
+	if err != nil {
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !clientExists {
+		http.Error(w, "Client not found", http.StatusBadRequest)
+		return
+	}
+	
 	query := `INSERT INTO contracts (client_id, "number", sign_date) VALUES ($1, $2, $3) RETURNING id`
-	err := h.DB.QueryRow(query, contract.ClientID, contract.Number, contract.SignDate).Scan(&contract.ID)
+	err = h.DB.QueryRow(query, contract.ClientID, contract.Number, contract.SignDate).Scan(&contract.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1634,7 +1649,7 @@ func (h *BillingHandler) GetContractStats(w http.ResponseWriter, r *http.Request
 	}
 
 	topDaysQuery += `
-		GROUP BY DATE(t.timestamp)
+		GROUP BY DATE(timestamp)
 		ORDER BY daily_traffic DESC
 		LIMIT 5
 	`
@@ -1712,26 +1727,34 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 	var args []interface{}
 	argIndex := 1
 
-	// Основной запрос для статистики по подключению
+	// Получаем IP адрес подключения для фильтрации flows
+	var connectionIP string
+	err = h.DB.Get(&connectionIP, "SELECT ip_address FROM connections WHERE id = $1", connectionID)
+	if err != nil {
+		http.Error(w, "Failed to get connection IP: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Основной запрос для статистики по подключению используя flows данные
 	baseQuery := `
 		SELECT 
 			COUNT(*) as total_records,
-			COALESCE(SUM(t.bytes_in), 0) as total_bytes_in,
-			COALESCE(SUM(t.bytes_out), 0) as total_bytes_out,
-			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as total_traffic,
-			COALESCE(AVG(t.bytes_in + t.bytes_out), 0) as avg_traffic,
-			COALESCE(MAX(t.bytes_in + t.bytes_out), 0) as max_traffic,
-			COALESCE(MIN(t.bytes_in + t.bytes_out), 0) as min_traffic,
-			COUNT(DISTINCT DATE(t.timestamp)) as active_days
-		FROM traffic t
-		WHERE t.connection_id = $` + strconv.Itoa(argIndex)
+			COALESCE(SUM(CASE WHEN dst_ip = $` + strconv.Itoa(argIndex) + ` THEN bytes ELSE 0 END), 0) as total_bytes_in,
+			COALESCE(SUM(CASE WHEN src_ip = $` + strconv.Itoa(argIndex) + ` THEN bytes ELSE 0 END), 0) as total_bytes_out,
+			COALESCE(SUM(bytes), 0) as total_traffic,
+			COALESCE(AVG(bytes), 0) as avg_traffic,
+			COALESCE(MAX(bytes), 0) as max_traffic,
+			COALESCE(MIN(bytes), 0) as min_traffic,
+			COUNT(DISTINCT DATE(timestamp)) as active_days
+		FROM flows
+		WHERE (src_ip = $` + strconv.Itoa(argIndex) + ` OR dst_ip = $` + strconv.Itoa(argIndex) + `)`
 
-	args = append(args, connectionID)
+	args = append(args, connectionIP)
 	argIndex++
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
-			baseQuery += " AND t.timestamp >= $" + strconv.Itoa(argIndex)
+			baseQuery += " AND timestamp >= $" + strconv.Itoa(argIndex)
 			args = append(args, parsedDate)
 			argIndex++
 		}
@@ -1740,7 +1763,7 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 	if toDate := queryParams.Get("to"); toDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
 			endDate := parsedDate.Add(24 * time.Hour)
-			baseQuery += " AND t.timestamp <= $" + strconv.Itoa(argIndex)
+			baseQuery += " AND timestamp <= $" + strconv.Itoa(argIndex)
 			args = append(args, endDate)
 			argIndex++
 		}
@@ -1812,17 +1835,17 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 	// Получаем топ дней по трафику для подключения
 	topDaysQuery := `
 		SELECT 
-			DATE(t.timestamp) as date,
-			COALESCE(SUM(t.bytes_in + t.bytes_out), 0) as daily_traffic
-		FROM traffic t
-		WHERE t.connection_id = $1
+			DATE(timestamp) as date,
+			COALESCE(SUM(bytes), 0) as daily_traffic
+		FROM flows
+		WHERE (src_ip = $1 OR dst_ip = $1)
 	`
-	topDaysArgs := []interface{}{connectionID}
+	topDaysArgs := []interface{}{connectionIP}
 	argIdx := 2
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
-			topDaysQuery += " AND t.timestamp >= $" + strconv.Itoa(argIdx)
+			topDaysQuery += " AND timestamp >= $" + strconv.Itoa(argIdx)
 			topDaysArgs = append(topDaysArgs, parsedDate)
 			argIdx++
 		}
@@ -1831,14 +1854,14 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 	if toDate := queryParams.Get("to"); toDate != "" {
 		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
 			endDate := parsedDate.Add(24 * time.Hour)
-			topDaysQuery += " AND t.timestamp <= $" + strconv.Itoa(argIdx)
+			topDaysQuery += " AND timestamp <= $" + strconv.Itoa(argIdx)
 			topDaysArgs = append(topDaysArgs, endDate)
 			argIdx++
 		}
 	}
 
 	topDaysQuery += `
-		GROUP BY DATE(t.timestamp)
+		GROUP BY DATE(timestamp)
 		ORDER BY daily_traffic DESC
 		LIMIT 5
 	`
@@ -2293,4 +2316,100 @@ func (h *BillingHandler) GetIssueHistory(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
+}
+
+// @Summary      Получить системную информацию
+// @Description  Возвращает информацию о системе, включая данные о трафике
+// @Tags         System
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      500  {object}  map[string]string
+// @Router       /system/info [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetSystemInfo(w http.ResponseWriter, r *http.Request) {
+	systemInfo := make(map[string]interface{})
+	
+	// Получаем информацию о первом и последнем файле трафика
+	var firstFile, lastFile *time.Time
+	
+	// Запрос для получения первого файла
+	err := h.DB.Get(&firstFile, `
+		SELECT MIN(flow_start) 
+		FROM flows 
+		WHERE flow_start IS NOT NULL
+	`)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Failed to get first traffic file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Запрос для получения последнего файла
+	err = h.DB.Get(&lastFile, `
+		SELECT MAX(flow_end) 
+		FROM flows 
+		WHERE flow_end IS NOT NULL
+	`)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, "Failed to get last traffic file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Подготавливаем ответ
+	if firstFile != nil {
+		systemInfo["firstTrafficFile"] = firstFile.Format(time.RFC3339)
+	}
+	if lastFile != nil {
+		systemInfo["lastTrafficFile"] = lastFile.Format(time.RFC3339)
+	}
+	
+	// Вычисляем доступный период трафика
+	if firstFile != nil && lastFile != nil {
+		duration := lastFile.Sub(*firstFile)
+		systemInfo["trafficTimeRange"] = duration.String()
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(systemInfo)
+}
+
+// @Summary      Получить информацию об IP адресе
+// @Description  Возвращает информацию об IP адресе, включая hostname и данные о подключении
+// @Tags         Network
+// @Produce      json
+// @Param        ip   path      string  true  "IP адрес"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  map[string]string
+// @Router       /ip/{ip}/info [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetIPInfo(w http.ResponseWriter, r *http.Request) {
+	ip := mux.Vars(r)["ip"]
+	
+	result := make(map[string]interface{})
+	
+	// Получаем информацию о hostname
+	if h.HostnameWorker != nil {
+		hostnameInfo, err := h.HostnameWorker.GetIPInfo(ip)
+		if err != nil {
+			http.Error(w, "Failed to get IP hostname info: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if hostnameInfo != nil {
+			result["hostname"] = hostnameInfo
+		}
+		
+		// Получаем информацию о подключении
+		connectionInfo, err := h.HostnameWorker.GetConnectionInfo(ip)
+		if err != nil {
+			http.Error(w, "Failed to get connection info: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if connectionInfo != nil {
+			result["connection"] = connectionInfo["connection"]
+		}
+	}
+	
+	result["ip"] = ip
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }

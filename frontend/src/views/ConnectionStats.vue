@@ -205,6 +205,11 @@ export default {
     };
 
     const loadConnectionStats = async () => {
+      if (!connectionId) {
+        error.value = 'ID подключения не указан';
+        return;
+      }
+      
       loading.value = true;
       error.value = null;
       
@@ -222,10 +227,12 @@ export default {
       } catch (e) {
         if (e.response?.status === 404) {
           error.value = 'Подключение не найдено';
+        } else if (e.response) {
+          error.value = `Ошибка при загрузке статистики: ${e.response.status}`;
         } else {
-          error.value = 'Ошибка при загрузке статистики подключения';
+          error.value = 'Ошибка сети при загрузке статистики подключения';
         }
-        console.error(e);
+        console.error('Error loading connection stats:', e);
       } finally {
         loading.value = false;
       }
