@@ -6,6 +6,7 @@ import Modal from '@/components/ui/Modal.vue';
 import TariffForm from '@/components/forms/TariffForm.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import { useNotificationStore } from '@/stores/notification';
 
 const notificationStore = useNotificationStore();
@@ -23,6 +24,10 @@ const {
 const isModalOpen = ref(false);
 const currentTariff = ref(null);
 const isEditMode = ref(false);
+
+// Confirm dialog state
+const isDeleteDialogOpen = ref(false);
+const tariffToDelete = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -155,9 +160,15 @@ async function handleSave(tariffData) {
 }
 
 // Обработка удаления тарифа
-async function handleDelete(itemId) {
+function confirmDelete(itemId) {
+  const tariff = tariffs.value.find(t => t.id === itemId);
+  tariffToDelete.value = tariff;
+  isDeleteDialogOpen.value = true;
+}
+
+async function handleDelete() {
   try {
-    await deleteItem(itemId);
+    await deleteItem(tariffToDelete.value.id);
     notificationStore.addNotification({
       type: 'success',
       title: 'Тариф удалён',
@@ -169,7 +180,15 @@ async function handleDelete(itemId) {
       title: 'Ошибка удаления',
       message: 'Не удалось удалить тариф'
     });
+  } finally {
+    isDeleteDialogOpen.value = false;
+    tariffToDelete.value = null;
   }
+}
+
+function cancelDelete() {
+  isDeleteDialogOpen.value = false;
+  tariffToDelete.value = null;
 }
 
 // Search and filter functions
@@ -202,7 +221,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     >
       <template #cell-payment_type="{ item }">
         <StatusBadge type="payment_type" :value="item.payment_type" size="small" />
@@ -225,5 +244,17 @@ function clearFilters() {
           @cancel="isModalOpen = false"
       />
     </Modal>
+
+    <ConfirmDialog
+      :is-open="isDeleteDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="tariffToDelete ? `Вы действительно хотите удалить тариф '${tariffToDelete.name}'?` : ''"
+      details="Это действие нельзя отменить. Все связанные подключения потеряют связь с этим тарифом."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>

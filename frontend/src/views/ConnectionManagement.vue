@@ -6,6 +6,7 @@ import Modal from '@/components/ui/Modal.vue';
 import ConnectionForm from '@/components/forms/ConnectionForm.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import apiClient from '@/api/client';
 import { useNotificationStore } from '@/stores/notification';
 
@@ -24,6 +25,12 @@ const {
 const isModalOpen = ref(false);
 const currentConnection = ref(null);
 const isEditMode = ref(false);
+
+// Confirm dialog state
+const isDeleteDialogOpen = ref(false);
+const isBlockDialogOpen = ref(false);
+const connectionToDelete = ref(null);
+const connectionToBlock = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -187,35 +194,59 @@ async function handleSave(connectionData) {
 }
 
 // Обработка удаления
-async function handleDelete(itemId) {
+function confirmDelete(itemId) {
+  const connection = connections.value.find(c => c.id === itemId);
+  connectionToDelete.value = connection;
+  isDeleteDialogOpen.value = true;
+}
+
+async function handleDelete() {
   try {
-    await deleteItem(itemId);
+    await deleteItem(connectionToDelete.value.id);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Подключение удалено',
+      message: 'Подключение успешно удалено'
+    });
   } catch (error) {
     notificationStore.addNotification({
       type: 'error',
       title: 'Ошибка удаления',
       message: 'Не удалось удалить подключение'
     });
+  } finally {
+    isDeleteDialogOpen.value = false;
+    connectionToDelete.value = null;
   }
 }
 
+function cancelDelete() {
+  isDeleteDialogOpen.value = false;
+  connectionToDelete.value = null;
+}
+
 // Функция блокировки/разблокировки подключения
-async function handleBlock(connection) {
-  const action = connection.is_blocked ? 'разблокировать' : 'заблокировать';
+function confirmBlock(connection) {
+  connectionToBlock.value = connection;
+  isBlockDialogOpen.value = true;
+}
+
+async function handleBlock() {
+  const action = connectionToBlock.value.is_blocked ? 'разблокировать' : 'заблокировать';
   try {
-    const endpoint = connection.is_blocked ? 'unblock' : 'block';
-    await apiClient.post(`/connections/${connection.id}/${endpoint}`);
+    const endpoint = connectionToBlock.value.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/connections/${connectionToBlock.value.id}/${endpoint}`);
     
     // Обновляем статус подключения в локальном массиве
-    const index = connections.value.findIndex(c => c.id === connection.id);
+    const index = connections.value.findIndex(c => c.id === connectionToBlock.value.id);
     if (index !== -1) {
-      connections.value[index].is_blocked = !connection.is_blocked;
+      connections.value[index].is_blocked = !connectionToBlock.value.is_blocked;
     }
     
     notificationStore.addNotification({
       type: 'success',
       title: 'Операция выполнена',
-      message: `Подключение успешно ${connection.is_blocked ? 'разблокировано' : 'заблокировано'}`
+      message: `Подключение успешно ${connectionToBlock.value.is_blocked ? 'разблокировано' : 'заблокировано'}`
     });
   } catch (error) {
     notificationStore.addNotification({
@@ -223,7 +254,15 @@ async function handleBlock(connection) {
       title: 'Ошибка операции',
       message: `Не удалось ${action} подключение`
     });
+  } finally {
+    isBlockDialogOpen.value = false;
+    connectionToBlock.value = null;
   }
+}
+
+function cancelBlock() {
+  isBlockDialogOpen.value = false;
+  connectionToBlock.value = null;
 }
 
 // Function to load contracts and tariffs for filters
@@ -278,7 +317,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     >
       <template #cell-is_blocked="{ item }">
         <StatusBadge type="blocked_status" :value="item.is_blocked" size="small" />
@@ -293,7 +332,7 @@ function clearFilters() {
           <span class="material-icons icon-sm">analytics</span>
         </router-link>
         <button 
-          @click="handleBlock(item)" 
+          @click="confirmBlock(item)" 
           :class="['btn btn-icon btn-sm', item.is_blocked ? 'unblock-btn' : 'block-btn']"
           :title="item.is_blocked ? 'Разблокировать подключение' : 'Заблокировать подключение'"
         >
@@ -318,6 +357,32 @@ function clearFilters() {
           @cancel="isModalOpen = false"
       />
     </Modal>
+
+    <!-- Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isDeleteDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="connectionToDelete ? `Вы действительно хотите удалить подключение по адресу '${connectionToDelete.address}' (${connectionToDelete.ip_address})?` : ''"
+      details="Это действие нельзя отменить. Вся история трафика по этому подключению будет сохранена."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
+
+    <!-- Block/Unblock Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isBlockDialogOpen"
+      :type="connectionToBlock?.is_blocked ? 'info' : 'warning'"
+      :title="connectionToBlock?.is_blocked ? 'Разблокировать подключение' : 'Заблокировать подключение'"
+      :message="connectionToBlock ? `Вы действительно хотите ${connectionToBlock.is_blocked ? 'разблокировать' : 'заблокировать'} подключение по адресу '${connectionToBlock.address}'?` : ''"
+      :details="connectionToBlock?.is_blocked ? 'Подключение сможет снова пользоваться интернетом.' : 'Подключение будет отключено от интернета.'"
+      :confirm-text="connectionToBlock?.is_blocked ? 'Разблокировать' : 'Заблокировать'"
+      cancel-text="Отмена"
+      @confirm="handleBlock"
+      @cancel="cancelBlock"
+    />
   </div>
 </template>
 

@@ -5,6 +5,7 @@ import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import EquipmentForm from '@/components/forms/EquipmentForm.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import { useNotificationStore } from '@/stores/notification';
 
 const notificationStore = useNotificationStore();
@@ -22,6 +23,10 @@ const {
 const isModalOpen = ref(false);
 const currentEquipment = ref(null);
 const isEditMode = ref(false);
+
+// Confirm dialog state
+const isDeleteDialogOpen = ref(false);
+const equipmentToDelete = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -106,9 +111,15 @@ async function handleSave(equipmentData) {
 }
 
 // Обработчик события 'delete' от таблицы
-async function handleDelete(itemId) {
+function confirmDelete(itemId) {
+  const equipmentItem = equipment.value.find(e => e.id === itemId);
+  equipmentToDelete.value = equipmentItem;
+  isDeleteDialogOpen.value = true;
+}
+
+async function handleDelete() {
   try {
-    await deleteItem(itemId);
+    await deleteItem(equipmentToDelete.value.id);
     notificationStore.addNotification({
       type: 'success',
       title: 'Оборудование удалено',
@@ -120,7 +131,15 @@ async function handleDelete(itemId) {
       title: 'Ошибка удаления',
       message: 'Не удалось удалить запись'
     });
+  } finally {
+    isDeleteDialogOpen.value = false;
+    equipmentToDelete.value = null;
   }
+}
+
+function cancelDelete() {
+  isDeleteDialogOpen.value = false;
+  equipmentToDelete.value = null;
 }
 
 // Search and filter functions
@@ -151,7 +170,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     />
 
     <!-- Кнопка для добавления новой записи -->
@@ -173,5 +192,17 @@ function clearFilters() {
           @cancel="isModalOpen = false"
       />
     </Modal>
+
+    <ConfirmDialog
+      :is-open="isDeleteDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="equipmentToDelete ? `Вы действительно хотите удалить оборудование '${equipmentToDelete.model}' (${equipmentToDelete.mac_address})?` : ''"
+      details="Это действие нельзя отменить. Все связанные подключения потеряют связь с этим оборудованием."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>
