@@ -7,28 +7,21 @@ const isDrawerOpen = ref(false);
 </script>
 
 <template>
-  <div class="app-layout">
+  <div class="min-h-screen bg-gray-50">
     <AppHeader @toggle-drawer="isDrawerOpen = !isDrawerOpen" />
     <SideDrawer :is-open="isDrawerOpen" @close="isDrawerOpen = false" />
 
     <main class="main-content">
-      <!-- Здесь будут отображаться наши страницы: UserManagement, TariffManagement и т.д. -->
-      <router-view />
+      <div class="max-w-7xl mx-auto px-6 py-8">
+        <router-view />
+      </div>
     </main>
   </div>
 </template>
 
 <style scoped>
-.app-layout {
-  display: flex;
-  flex-direction: column;
-  height: 100vh; /* Занимает всю высоту экрана */
-  overflow: hidden; /* Предотвращает двойной скроллбар */
-}
-
 .main-content {
-  flex-grow: 1; /* Занимает все оставшееся пространство */
-  overflow-y: auto; /* Позволяет прокручивать только основное содержимое */
-  background-color: var(--background-color);
+  padding-top: 5rem; /* Account for fixed header height */
+  min-height: calc(100vh - 5rem);
 }
 </style>

@@ -1,9 +1,12 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, reactive } from 'vue';
 import { useCrud } from '@/composables/useCrud';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import ConnectionForm from '@/components/forms/ConnectionForm.vue';
+import SearchFilters from '@/components/ui/SearchFilters.vue';
+import StatusBadge from '@/components/ui/StatusBadge.vue';
+import apiClient from '@/api/client';
 
 // Инициализируем CRUD-операции для эндпоинта '/api/connections'
 const {
@@ -19,14 +22,96 @@ const isModalOpen = ref(false);
 const currentConnection = ref(null);
 const isEditMode = ref(false);
 
-// Описание колонок для таблицы.
-// Примечание: мы показываем ID, так как для показа имен нужна более сложная логика.
+// Search and filter state
+const searchQuery = ref('');
+const filterValues = reactive({
+  connection_type: '',
+  contract_id: '',
+  tariff_id: ''
+});
+
+// Filter configuration
+const filters = [
+  {
+    key: 'connection_type',
+    label: 'Тип подключения',
+    type: 'select',
+    options: [
+      { value: 'FTTB', label: 'FTTB' },
+      { value: 'FTTH', label: 'FTTH' },
+      { value: 'DSL', label: 'DSL' },
+      { value: 'Cable', label: 'Cable' },
+      { value: 'Wireless', label: 'Wireless' }
+    ]
+  },
+  {
+    key: 'contract_id',
+    label: 'ID договора',
+    type: 'number',
+    placeholder: 'Введите ID договора...'
+  },
+  {
+    key: 'tariff_id',
+    label: 'ID тарифа',
+    type: 'number',
+    placeholder: 'Введите ID тарифа...'
+  }
+];
+
+// Computed filtered connections
+const filteredConnections = computed(() => {
+  let filtered = connections.value;
+
+  // Apply search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    filtered = filtered.filter(connection => {
+      const address = (connection.address || '').toLowerCase();
+      const ipAddress = (connection.ip_address || '').toLowerCase();
+      return address.includes(query) || ipAddress.includes(query);
+    });
+  }
+
+  // Apply filters
+  if (filterValues.connection_type) {
+    filtered = filtered.filter(connection => connection.connection_type === filterValues.connection_type);
+  }
+  if (filterValues.contract_id) {
+    filtered = filtered.filter(connection => connection.contract_id.toString() === filterValues.contract_id.toString());
+  }
+  if (filterValues.tariff_id) {
+    filtered = filtered.filter(connection => connection.tariff_id.toString() === filterValues.tariff_id.toString());
+  }
+
+  return filtered;
+});
+
+// Описание колонок для таблицы
 const columns = [
   { key: 'id', label: 'ID' },
   { key: 'address', label: 'Адрес' },
-  { key: 'ip_address', label: 'IP Адрес' },
-  { key: 'tariff_id', label: 'ID Тарифа' },
-  { key: 'contract_id', label: 'ID Договора' },
+  { key: 'ip_address', label: 'IP-адрес' },
+  { key: 'connection_type', label: 'Тип подключения' },
+  { 
+    key: 'contract_number', 
+    label: 'Договор',
+    formatter: (connection) => connection.contract_number || `ID: ${connection.contract_id}`
+  },
+  { 
+    key: 'tariff_name', 
+    label: 'Тариф',
+    formatter: (connection) => connection.tariff_name || `ID: ${connection.tariff_id}`
+  },
+  { 
+    key: 'equipment_model', 
+    label: 'Оборудование',
+    formatter: (connection) => connection.equipment_model || `ID: ${connection.equipment_id}`
+  },
+  {
+    key: 'is_blocked',
+    label: 'Статус',
+    component: 'StatusBadge'
+  },
 ];
 
 // Открытие модального окна для создания нового подключения
@@ -60,6 +145,7 @@ async function handleSave(connectionData) {
       await createItem(connectionData);
     }
     isModalOpen.value = false;
+    currentConnection.value = null; // Очищаем форму
   } catch (error) {
     alert('Не удалось сохранить подключение.');
   }
@@ -75,6 +161,33 @@ async function handleDelete(itemId) {
     }
   }
 }
+
+// Функция блокировки/разблокировки подключения
+async function handleBlock(connection) {
+  const action = connection.is_blocked ? 'разблокировать' : 'заблокировать';
+  if (confirm(`Вы уверены, что хотите ${action} подключение?`)) {
+    try {
+      const endpoint = connection.is_blocked ? 'unblock' : 'block';
+      await apiClient.post(`/connections/${connection.id}/${endpoint}`);
+      
+      // Обновляем статус подключения в локальном массиве
+      const index = connections.value.findIndex(c => c.id === connection.id);
+      if (index !== -1) {
+        connections.value[index].is_blocked = !connection.is_blocked;
+      }
+    } catch (error) {
+      alert(`Не удалось ${action} подключение.`);
+    }
+  }
+}
+
+// Search and filter functions
+function clearFilters() {
+  searchQuery.value = '';
+  filterValues.connection_type = '';
+  filterValues.contract_id = '';
+  filterValues.tariff_id = '';
+}
 </script>
 
 <template>
@@ -83,15 +196,48 @@ async function handleDelete(itemId) {
       <h1>Управление подключениями</h1>
     </header>
 
+    <SearchFilters
+      :search-query="searchQuery"
+      search-placeholder="Поиск по адресу или IP адресу..."
+      :filters="filters"
+      :filter-values="filterValues"
+      @search="searchQuery = $event"
+      @filter="filterValues[$event.key] = $event.value"
+      @clear="clearFilters"
+    />
+
     <DataTable
-        :items="connections"
+        :items="filteredConnections"
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
         @delete="handleDelete"
-    />
+    >
+      <template #cell-is_blocked="{ item }">
+        <StatusBadge type="blocked_status" :value="item.is_blocked" size="small" />
+      </template>
+      
+      <template #actions="{ item }">
+        <router-link 
+          :to="`/connections/${item.id}/stats`"
+          class="btn btn-icon btn-sm stats-btn mr-2"
+          title="Статистика по подключению"
+        >
+          <span class="material-icons icon-sm">analytics</span>
+        </router-link>
+        <button 
+          @click="handleBlock(item)" 
+          :class="['btn btn-icon btn-sm', item.is_blocked ? 'unblock-btn' : 'block-btn']"
+          :title="item.is_blocked ? 'Разблокировать подключение' : 'Заблокировать подключение'"
+        >
+          <span class="material-icons icon-sm">{{ item.is_blocked ? 'lock_open' : 'lock' }}</span>
+        </button>
+      </template>
+    </DataTable>
 
-    <button class="fab" @click="openCreateModal">+</button>
+    <button class="fab" @click="openCreateModal">
+      <span class="material-icons icon-lg">add</span>
+    </button>
 
     <Modal :is-open="isModalOpen" @close="isModalOpen = false">
       <template #header>
@@ -107,3 +253,63 @@ async function handleDelete(itemId) {
     </Modal>
   </div>
 </template>
+
+<style scoped>
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.block-btn {
+  background: linear-gradient(135deg, var(--error-500) 0%, var(--error-600) 100%);
+  color: white;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(234, 67, 53, 0.2);
+}
+
+.block-btn:hover {
+  background: linear-gradient(135deg, var(--error-600) 0%, var(--error-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(234, 67, 53, 0.3);
+}
+
+.unblock-btn {
+  background: linear-gradient(135deg, var(--success-500) 0%, var(--success-600) 100%);
+  color: white;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(52, 168, 83, 0.2);
+}
+
+.unblock-btn:hover {
+  background: linear-gradient(135deg, var(--success-600) 0%, var(--success-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(52, 168, 83, 0.3);
+}
+
+.stats-btn {
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: white;
+  text-decoration: none;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stats-btn:hover {
+  background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-700) 100%);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+}
+
+.mr-2 {
+  margin-right: 8px;
+}
+</style>

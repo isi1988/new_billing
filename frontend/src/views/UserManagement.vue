@@ -1,15 +1,56 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, reactive } from 'vue';
 import { useCrud } from '@/composables/useCrud';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import UserForm from '@/components/forms/UserForm.vue';
+import SearchFilters from '@/components/ui/SearchFilters.vue';
 
 const { items: users, loading, createItem, updateItem, deleteItem } = useCrud('users');
 
 const isModalOpen = ref(false);
 const currentUser = ref(null);
 const isEditMode = ref(false);
+
+// Search and filter state
+const searchQuery = ref('');
+const filterValues = reactive({
+  role: ''
+});
+
+// Filter configuration
+const filters = [
+  {
+    key: 'role',
+    label: 'Роль',
+    type: 'select',
+    options: [
+      { value: 'admin', label: 'Администратор' },
+      { value: 'manager', label: 'Менеджер' }
+    ]
+  }
+];
+
+// Computed filtered users
+const filteredUsers = computed(() => {
+  let filtered = users.value;
+
+  // Apply search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    filtered = filtered.filter(user => {
+      const username = (user.username || '').toLowerCase();
+      return username.includes(query);
+    });
+  }
+
+  // Apply filters
+  if (filterValues.role) {
+    filtered = filtered.filter(user => user.role === filterValues.role);
+  }
+
+  return filtered;
+});
 
 const columns = [
   { key: 'id', label: 'ID' },
@@ -37,6 +78,7 @@ async function handleSave(userData) {
       await createItem(userData);
     }
     isModalOpen.value = false;
+    currentUser.value = null; // Очищаем форму
   } catch (error) {
     alert('Не удалось сохранить пользователя.');
   }
@@ -51,6 +93,12 @@ async function handleDelete(userId) {
     }
   }
 }
+
+// Search and filter functions
+function clearFilters() {
+  searchQuery.value = '';
+  filterValues.role = '';
+}
 </script>
 
 <template>
@@ -59,15 +107,27 @@ async function handleDelete(userId) {
       <h1>Управление пользователями</h1>
     </header>
 
+    <SearchFilters
+      :search-query="searchQuery"
+      search-placeholder="Поиск по имени пользователя..."
+      :filters="filters"
+      :filter-values="filterValues"
+      @search="searchQuery = $event"
+      @filter="filterValues[$event.key] = $event.value"
+      @clear="clearFilters"
+    />
+
     <DataTable
-        :items="users"
+        :items="filteredUsers"
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
         @delete="handleDelete"
     />
 
-    <button class="fab" @click="openCreateModal">+</button>
+    <button class="fab" @click="openCreateModal">
+      <span class="material-icons icon-lg">add</span>
+    </button>
 
     <Modal :is-open="isModalOpen" @close="isModalOpen = false">
       <template #header>

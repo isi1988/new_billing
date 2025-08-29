@@ -8,6 +8,29 @@ const emit = defineEmits(['save', 'cancel']);
 
 const form = ref({});
 
+function formatPhoneInput(event) {
+  const input = event.target;
+  let value = input.value.replace(/\D/g, ''); // Remove all non-digits
+  
+  if (value.startsWith('8') && value.length > 1) {
+    value = '7' + value.slice(1);
+  }
+  
+  if (value.startsWith('7') && value.length <= 11) {
+    const match = value.match(/^7(\d{0,3})(\d{0,3})(\d{0,2})(\d{0,2})$/);
+    if (match) {
+      value = '+7';
+      if (match[1]) value += ` (${match[1]}`;
+      if (match[2]) value += `) ${match[2]}`;
+      if (match[3]) value += `-${match[3]}`;
+      if (match[4]) value += `-${match[4]}`;
+    }
+  }
+  
+  input.value = value;
+  form.value.phone = value;
+}
+
 watch(() => props.initialData, (newData) => {
   // Форматируем даты для input type="date"
   const formattedData = { ...newData };
@@ -45,7 +68,14 @@ function handleSubmit() {
       </div>
       <div class="form-group">
         <label for="phone">Телефон</label>
-        <input id="phone" type="tel" v-model="form.phone" required />
+        <input 
+          id="phone" 
+          type="tel" 
+          v-model="form.phone" 
+          @input="formatPhoneInput"
+          placeholder="+7 (999) 999-99-99"
+          required 
+        />
       </div>
     </div>
 
@@ -78,15 +108,30 @@ function handleSubmit() {
         <div class="form-group"><label for="ogrn_date">Дата ОГРН</label><input id="ogrn_date" type="date" v-model="form.ogrn_date" /></div>
         <div class="form-group span-2"><label for="legal_address">Юридический адрес</label><input id="legal_address" type="text" v-model="form.legal_address" /></div>
         <div class="form-group span-2"><label for="actual_address">Фактический адрес</label><input id="actual_address" type="text" v-model="form.actual_address" /></div>
-        <div class="form-group span-2"><label for="bank_details">Банковские реквизиты</label><textarea id="bank_details" v-model="form.bank_details"></textarea></div>
+        
+        <!-- Банковские реквизиты -->
+        <div class="form-group span-2">
+          <h4 class="form-subsection">Банковские реквизиты</h4>
+        </div>
+        <div class="form-group span-2"><label for="bank_name">Наименование банка</label><input id="bank_name" type="text" v-model="form.bank_name" placeholder="Например: ПАО Сбербанк" /></div>
+        <div class="form-group"><label for="bank_account">Расчетный счет</label><input id="bank_account" type="text" v-model="form.bank_account" placeholder="40702810..." maxlength="20" /></div>
+        <div class="form-group"><label for="bank_bik">БИК банка</label><input id="bank_bik" type="text" v-model="form.bank_bik" placeholder="044525225" maxlength="9" /></div>
+        <div class="form-group span-2"><label for="bank_correspondent">Корреспондентский счет</label><input id="bank_correspondent" type="text" v-model="form.bank_correspondent" placeholder="30101810..." maxlength="20" /></div>
+        
         <div class="form-group"><label for="ceo">Генеральный директор</label><input id="ceo" type="text" v-model="form.ceo" /></div>
         <div class="form-group"><label for="accountant">Главный бухгалтер</label><input id="accountant" type="text" v-model="form.accountant" /></div>
       </div>
     </div>
 
     <div class="form-actions">
-      <button type="button" class="btn btn-secondary" @click="$emit('cancel')">Отмена</button>
-      <button type="submit" class="btn btn-primary">Сохранить</button>
+      <button type="button" class="btn btn-md btn-secondary" @click="$emit('cancel')">
+        <span class="icon icon-sm">❌</span>
+        Отмена
+      </button>
+      <button type="submit" class="btn btn-md btn-primary">
+        <span class="icon icon-sm">✓</span>
+        Сохранить
+      </button>
     </div>
   </form>
 </template>
@@ -95,26 +140,50 @@ function handleSubmit() {
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 1.5rem;
 }
+
 .span-2 {
   grid-column: span 2;
 }
+
 .form-divider {
   border: none;
-  border-top: 1px solid var(--border-color);
-  margin: 24px 0;
+  border-top: 1px solid var(--gray-200);
+  margin: 1.5rem 0;
 }
+
 .form-section h3 {
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 1.125rem;
+  font-weight: 600;
   margin-top: 0;
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--primary-200);
+  color: var(--gray-900);
 }
-textarea {
-  min-height: 80px;
+
+textarea.form-control {
+  min-height: 5rem;
   resize: vertical;
+}
+
+.form-subsection {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin: 0;
+  color: var(--gray-700);
+  padding-bottom: 0.25rem;
+  border-bottom: 1px dotted var(--gray-300);
+}
+
+@media (max-width: 768px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .span-2 {
+    grid-column: span 1;
+  }
 }
 </style>

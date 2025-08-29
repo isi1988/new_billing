@@ -1,9 +1,10 @@
 <script setup>
-import { ref } from 'vue';
-import { useCrud } from '@/composables/useCrud'; // Наша универсальная CRUD-логика
-import DataTable from '@/components/ui/DataTable.vue'; // Переиспользуемая таблица
-import Modal from '@/components/ui/Modal.vue'; // Переиспользуемое модальное окно
-import EquipmentForm from '@/components/forms/EquipmentForm.vue'; // Форма, которую мы создали выше
+import { ref, computed, reactive } from 'vue';
+import { useCrud } from '@/composables/useCrud';
+import DataTable from '@/components/ui/DataTable.vue';
+import Modal from '@/components/ui/Modal.vue';
+import EquipmentForm from '@/components/forms/EquipmentForm.vue';
+import SearchFilters from '@/components/ui/SearchFilters.vue';
 
 // Инициализируем CRUD-операции для эндпоинта '/api/equipment'
 const {
@@ -16,8 +17,33 @@ const {
 
 // Состояние для управления модальным окном
 const isModalOpen = ref(false);
-const currentEquipment = ref(null); // Здесь будет храниться объект для редактирования/создания
+const currentEquipment = ref(null);
 const isEditMode = ref(false);
+
+// Search and filter state
+const searchQuery = ref('');
+const filterValues = reactive({});
+
+// No filters for equipment - just search
+const filters = [];
+
+// Computed filtered equipment
+const filteredEquipment = computed(() => {
+  let filtered = equipment.value;
+
+  // Apply search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    filtered = filtered.filter(item => {
+      const model = (item.model || '').toLowerCase();
+      const macAddress = (item.mac_address || '').toLowerCase();
+      const description = (item.description || '').toLowerCase();
+      return model.includes(query) || macAddress.includes(query) || description.includes(query);
+    });
+  }
+
+  return filtered;
+});
 
 // Описание колонок для нашей таблицы
 const columns = [
@@ -56,6 +82,7 @@ async function handleSave(equipmentData) {
       await createItem(equipmentData);
     }
     isModalOpen.value = false; // Закрываем модальное окно при успехе
+    currentEquipment.value = null; // Очищаем форму
   } catch (error) {
     alert('Не удалось сохранить данные. Проверьте консоль.');
   }
@@ -71,6 +98,11 @@ async function handleDelete(itemId) {
     }
   }
 }
+
+// Search and filter functions
+function clearFilters() {
+  searchQuery.value = '';
+}
 </script>
 
 <template>
@@ -79,9 +111,19 @@ async function handleDelete(itemId) {
       <h1>Управление оборудованием</h1>
     </header>
 
+    <SearchFilters
+      :search-query="searchQuery"
+      search-placeholder="Поиск по модели, MAC-адресу или описанию..."
+      :filters="filters"
+      :filter-values="filterValues"
+      @search="searchQuery = $event"
+      @filter="filterValues[$event.key] = $event.value"
+      @clear="clearFilters"
+    />
+
     <!-- Компонент таблицы данных -->
     <DataTable
-        :items="equipment"
+        :items="filteredEquipment"
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
@@ -89,7 +131,9 @@ async function handleDelete(itemId) {
     />
 
     <!-- Кнопка для добавления новой записи -->
-    <button class="fab" @click="openCreateModal">+</button>
+    <button class="fab" @click="openCreateModal">
+      <span class="material-icons icon-lg">add</span>
+    </button>
 
     <!-- Модальное окно для формы -->
     <Modal :is-open="isModalOpen" @close="isModalOpen = false">

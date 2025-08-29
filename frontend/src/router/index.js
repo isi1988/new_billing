@@ -9,8 +9,9 @@ import TariffManagement from '../views/TariffManagement.vue';
 import ConnectionManagement from '../views/ConnectionManagement.vue';
 import ContractManagement from '../views/ContractManagement.vue';
 import ClientManagement from "../views/ClientManagement.vue";
-// Задел на будущее: импортируем страницу клиентов, которую создадим следующей
-// import ClientManagement from '../views/ClientManagement.vue';
+import TrafficDashboard from "../views/TrafficDashboard.vue";
+import ContractStats from "../views/ContractStats.vue";
+import IssueManagement from "../views/IssueManagement.vue";
 
 const routes = [
     // --- Основные маршруты ---
@@ -69,6 +70,27 @@ const routes = [
       path: '/clients',
       name: 'ClientManagement',
       component: ClientManagement,
+      meta: { requiresAuth: true },
+    },
+    {
+      // Дашборд трафика
+      path: '/traffic',
+      name: 'TrafficDashboard',
+      component: TrafficDashboard,
+      meta: { requiresAuth: true },
+    },
+    {
+      // Статистика по договору
+      path: '/contracts/:id/stats',
+      name: 'ContractStats',
+      component: ContractStats,
+      meta: { requiresAuth: true },
+    },
+    {
+      // Управление доработками
+      path: '/issues',
+      name: 'IssueManagement',
+      component: IssueManagement,
       meta: { requiresAuth: true },
     },
 ];

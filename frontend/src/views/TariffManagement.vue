@@ -1,9 +1,11 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, reactive } from 'vue';
 import { useCrud } from '@/composables/useCrud';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import TariffForm from '@/components/forms/TariffForm.vue';
+import StatusBadge from '@/components/ui/StatusBadge.vue';
+import SearchFilters from '@/components/ui/SearchFilters.vue';
 
 // Инициализируем CRUD-операции для эндпоинта '/api/tariffs'
 const {
@@ -19,13 +21,81 @@ const isModalOpen = ref(false);
 const currentTariff = ref(null);
 const isEditMode = ref(false);
 
+// Search and filter state
+const searchQuery = ref('');
+const filterValues = reactive({
+  payment_type: '',
+  is_archived: '',
+  is_for_individuals: ''
+});
+
+// Filter configuration
+const filters = [
+  {
+    key: 'payment_type',
+    label: 'Тип оплаты',
+    type: 'select',
+    options: [
+      { value: 'prepaid', label: 'Предоплата' },
+      { value: 'postpaid', label: 'Постоплата' }
+    ]
+  },
+  {
+    key: 'is_archived',
+    label: 'Статус',
+    type: 'select',
+    options: [
+      { value: 'false', label: 'Активные' },
+      { value: 'true', label: 'Архивные' }
+    ]
+  },
+  {
+    key: 'is_for_individuals',
+    label: 'Для кого',
+    type: 'select',
+    options: [
+      { value: 'true', label: 'Физ. лица' },
+      { value: 'false', label: 'Юр. лица' }
+    ]
+  }
+];
+
+// Computed filtered tariffs
+const filteredTariffs = computed(() => {
+  let filtered = tariffs.value;
+
+  // Apply search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    filtered = filtered.filter(tariff => {
+      const name = (tariff.name || '').toLowerCase();
+      return name.includes(query);
+    });
+  }
+
+  // Apply filters
+  if (filterValues.payment_type) {
+    filtered = filtered.filter(tariff => tariff.payment_type === filterValues.payment_type);
+  }
+  if (filterValues.is_archived !== '') {
+    const isArchived = filterValues.is_archived === 'true';
+    filtered = filtered.filter(tariff => tariff.is_archived === isArchived);
+  }
+  if (filterValues.is_for_individuals !== '') {
+    const forIndividuals = filterValues.is_for_individuals === 'true';
+    filtered = filtered.filter(tariff => tariff.is_for_individuals === forIndividuals);
+  }
+
+  return filtered;
+});
+
 // Описание колонок для таблицы
 const columns = [
   { key: 'id', label: 'ID' },
   { key: 'name', label: 'Название' },
-  { key: 'payment_type', label: 'Тип оплаты' },
-  { key: 'max_speed_in', label: 'Скорость вх. (Кбит/с)' },
-  { key: 'is_archived', label: 'Архивный' },
+  { key: 'payment_type', label: 'Тип оплаты', component: 'StatusBadge' },
+  { key: 'max_speed_in', label: 'Скорость вх. (Кбит/с)', formatter: (tariff) => `${(tariff.max_speed_in / 1000).toFixed(0)} Мбит/с` },
+  { key: 'is_archived', label: 'Архивный', formatter: (tariff) => tariff.is_archived ? 'Архивный' : 'Активный' },
 ];
 
 // Открытие модального окна для создания нового тарифа
@@ -61,6 +131,7 @@ async function handleSave(tariffData) {
       await createItem(tariffData);
     }
     isModalOpen.value = false;
+    currentTariff.value = null; // Очищаем форму
   } catch (error) {
     alert('Не удалось сохранить тариф.');
   }
@@ -76,6 +147,14 @@ async function handleDelete(itemId) {
     }
   }
 }
+
+// Search and filter functions
+function clearFilters() {
+  searchQuery.value = '';
+  filterValues.payment_type = '';
+  filterValues.is_archived = '';
+  filterValues.is_for_individuals = '';
+}
 </script>
 
 <template>
@@ -84,15 +163,31 @@ async function handleDelete(itemId) {
       <h1>Управление тарифами</h1>
     </header>
 
+    <SearchFilters
+      :search-query="searchQuery"
+      search-placeholder="Поиск по названию тарифа..."
+      :filters="filters"
+      :filter-values="filterValues"
+      @search="searchQuery = $event"
+      @filter="filterValues[$event.key] = $event.value"
+      @clear="clearFilters"
+    />
+
     <DataTable
-        :items="tariffs"
+        :items="filteredTariffs"
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
         @delete="handleDelete"
-    />
+    >
+      <template #cell-payment_type="{ item }">
+        <StatusBadge type="payment_type" :value="item.payment_type" size="small" />
+      </template>
+    </DataTable>
 
-    <button class="fab" @click="openCreateModal">+</button>
+    <button class="fab" @click="openCreateModal">
+      <span class="material-icons icon-lg">add</span>
+    </button>
 
     <Modal :is-open="isModalOpen" @close="isModalOpen = false">
       <template #header>

@@ -9,91 +9,127 @@ const emit = defineEmits(['edit', 'delete']);
 </script>
 
 <template>
-  <div class="data-table-container">
-    <div v-if="loading" class="loading-spinner">Загрузка...</div>
-    <table v-else class="data-table">
-      <thead>
-      <tr>
-        <th v-for="col in columns" :key="col.key">{{ col.label }}</th>
-        <th>Действия</th>
-      </tr>
-      </thead>
-      <tbody>
-      <tr v-if="items.length === 0">
-        <td :colspan="columns.length + 1" class="no-data">Нет данных для отображения</td>
-      </tr>
-      <tr v-for="item in items" :key="item.id">
-        <td v-for="col in columns" :key="col.key">
-          {{ col.formatter ? col.formatter(item) : item[col.key] }}
-        </td>
-        <td>
-          <button @click="emit('edit', item)" class="action-btn edit-btn">✎</button>
-          <button @click="emit('delete', item.id)" class="action-btn delete-btn">🗑</button>
-        </td>
-      </tr>
-      </tbody>
-    </table>
+  <div class="card">
+    <div v-if="loading" class="loading-container">
+      <div class="spinner"></div>
+    </div>
+    <div v-else class="table-container">
+      <table class="table">
+        <thead>
+        <tr>
+          <th v-for="col in columns" :key="col.key">{{ col.label }}</th>
+          <th>Действия</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-if="items.length === 0">
+          <td :colspan="columns.length + 1" class="no-data">Нет данных для отображения</td>
+        </tr>
+        <template v-for="item in items" :key="item.id">
+          <tr>
+            <td v-for="col in columns" :key="col.key">
+              <slot :name="`cell-${col.key}`" :item="item" :value="item[col.key]">
+                {{ col.formatter ? col.formatter(item) : item[col.key] }}
+              </slot>
+            </td>
+            <td class="actions-cell">
+              <div class="actions-group">
+                <button @click="emit('edit', item)" class="btn btn-icon btn-sm edit-btn" title="Редактировать">
+                  <span class="material-icons icon-sm">edit</span>
+                </button>
+                <button @click="emit('delete', item.id)" class="btn btn-icon btn-sm delete-btn" title="Удалить">
+                  <span class="material-icons icon-sm">delete</span>
+                </button>
+                <!-- Custom actions slot -->
+                <slot name="actions" :item="item"></slot>
+              </div>
+            </td>
+          </tr>
+          <!-- Expandable row -->
+          <tr v-if="$slots[`expand-${item.id}`]" class="expandable-row">
+            <td :colspan="columns.length + 1" class="expand-cell">
+              <slot :name="`expand-${item.id}`" :item="item"></slot>
+            </td>
+          </tr>
+        </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.data-table-container {
-  background: var(--surface-color);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  overflow-x: auto; /* Позволяет таблице скроллиться по горизонтали на мал. экранах */
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 3rem;
 }
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
+
+.table-container {
+  overflow-x: auto;
 }
-.data-table th, .data-table td {
-  padding: 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--border-color);
-  white-space: nowrap; /* Предотвращает перенос строк в ячейках */
-}
-.data-table th {
-  font-weight: 500;
-  font-size: 14px;
-  color: var(--text-color-light);
-  text-transform: uppercase;
-  background-color: #F7FAFC;
-}
-.data-table tbody tr:hover {
-  background-color: #f9fafb;
-}
+
 .no-data {
   text-align: center;
-  color: var(--text-color-light);
-  padding: 32px;
-  font-size: 16px;
+  color: var(--gray-500);
+  padding: 2rem;
+  font-size: 1rem;
 }
-.action-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 18px;
-  padding: 4px;
-  margin-right: 8px;
-  transition: color 0.2s;
+
+.actions-cell {
+  white-space: nowrap;
+  width: 1%;
 }
+
+.actions-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
 .edit-btn {
-  color: var(--primary-color);
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: white;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
 }
+
 .edit-btn:hover {
-  color: var(--primary-color-dark);
+  background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
 }
+
 .delete-btn {
-  color: var(--danger-color);
+  background: linear-gradient(135deg, var(--error-500) 0%, var(--error-600) 100%);
+  color: white;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(234, 67, 53, 0.2);
 }
+
 .delete-btn:hover {
-  color: #c53030;
+  background: linear-gradient(135deg, var(--error-600) 0%, var(--error-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(234, 67, 53, 0.3);
 }
-.loading-spinner {
-  padding: 48px;
-  text-align: center;
-  font-size: 16px;
-  color: var(--text-color-light);
+
+.expandable-row {
+  background: var(--gray-50);
+}
+
+.expand-cell {
+  padding: 0 !important;
+  border-top: none;
 }
 </style>
