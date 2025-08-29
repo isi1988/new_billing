@@ -70,6 +70,7 @@ func main() {
 	// Роуты для NetFlow (доступны всем аутентифицированным пользователям)
 	apiRouter.HandleFunc("/flows/search", netflowHandler.SearchFlows).Methods("GET")
 	apiRouter.HandleFunc("/flows/aggregate", netflowHandler.AggregateFlows).Methods("GET")
+	apiRouter.HandleFunc("/flows/aggregate-by-ip", netflowHandler.AggregateFlowsByIP).Methods("GET")
 
 	// --- Роуты для Менеджеров и Админов ---
 	managerRouter := apiRouter.PathPrefix("").Subrouter()

@@ -62,6 +62,14 @@
               class="form-control"
             />
           </div>
+          <div class="form-group">
+            <label class="form-label">Группировка</label>
+            <select v-model="filters.groupBy" class="form-control">
+              <option value="day">По дням</option>
+              <option value="hour">По часам</option>
+              <option value="none">Без группировки</option>
+            </select>
+          </div>
         </div>
         <div class="button-group">
           <button 
@@ -140,7 +148,7 @@
       <!-- Таблица -->
       <div v-else class="table-container">
         <table class="table">
-          <thead>
+          <thead v-if="filters.groupBy === 'none'">
             <tr>
               <th>Время</th>
               <th>Источник</th>
@@ -151,11 +159,20 @@
               <th>Пакеты</th>
             </tr>
           </thead>
+          <thead v-else>
+            <tr>
+              <th>Период</th>
+              <th>Входящий трафик (МБ)</th>
+              <th>Исходящий трафик (МБ)</th>
+              <th>Общий трафик (МБ)</th>
+            </tr>
+          </thead>
           <tbody>
             <tr v-if="traffic.length === 0">
-              <td colspan="7" class="text-center text-gray-500">Нет данных для отображения</td>
+              <td :colspan="filters.groupBy === 'none' ? 7 : 4" class="text-center text-gray-500">Нет данных для отображения</td>
             </tr>
-            <tr v-for="item in traffic" :key="item.timestamp + item.src_ip + item.dst_ip">
+            <!-- Обычный режим просмотра -->
+            <tr v-if="filters.groupBy === 'none'" v-for="item in traffic" :key="item.timestamp + item.src_ip + item.dst_ip">
               <td class="text-gray-900">{{ formatDateTime(item.timestamp) }}</td>
               <td class="text-gray-700">
                 <div class="flow-endpoint">
@@ -178,12 +195,19 @@
               <td class="font-medium">{{ formatBytes(item.bytes) }}</td>
               <td class="text-gray-600">{{ item.packets }}</td>
             </tr>
+            <!-- Режим группировки -->
+            <tr v-else v-for="item in traffic" :key="item.time_period">
+              <td class="text-gray-900">{{ formatDateTime(item.time_period) }}</td>
+              <td class="font-medium text-green-600">{{ item.bytes_in_mb }} МБ</td>
+              <td class="font-medium text-blue-600">{{ item.bytes_out_mb }} МБ</td>
+              <td class="font-medium text-gray-900">{{ item.total_bytes_mb }} МБ</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
-      <!-- Пагинация -->
-      <div class="card-footer flex justify-between items-center">
+      <!-- Пагинация (только для обычного режима) -->
+      <div v-if="filters.groupBy === 'none'" class="card-footer flex justify-between items-center">
         <div class="flex items-center gap-2">
           <label class="form-label">Записей на странице:</label>
           <select 
@@ -254,7 +278,8 @@ export default {
       clientId: '',
       ipAddress: '',
       fromDate: '',
-      toDate: ''
+      toDate: '',
+      groupBy: 'day'
     });
 
     const pagination = reactive({
@@ -313,6 +338,9 @@ export default {
       }
       if (item.direction === 'mixed') {
         return 'Смешанный';
+      }
+      if (item.direction === 'aggregated') {
+        return 'Группировка';
       }
       return 'Неизвестно';
     };
@@ -405,22 +433,74 @@ export default {
         
         console.log('Searching flows with params:', params.toString());
         
-        // Получаем flows данные
-        const response = await apiClient.get(`/flows/search?${params.toString()}`);
-        console.log('Flows response:', response.data);
-        
-        const result = response.data;
-        traffic.value = result.flows || [];
-        
-        // Обновляем статистику и пагинацию из ответа
-        stats.value = {
-          total_records: result.total_records,
-          total_bytes_in: result.total_bytes_in,
-          total_bytes_out: result.total_bytes_out,
-          total_traffic: result.total_traffic
-        };
-        
-        pagination.total = result.total_records;
+        if (filters.groupBy === 'none') {
+          // Обычный поиск flows для детального просмотра
+          const response = await apiClient.get(`/flows/search?${params.toString()}`);
+          console.log('Flows response:', response.data);
+          
+          const result = response.data;
+          traffic.value = result.flows || [];
+          
+          // Обновляем статистику и пагинацию из ответа
+          stats.value = {
+            total_records: result.total_records,
+            total_bytes_in: result.total_bytes_in,
+            total_bytes_out: result.total_bytes_out,
+            total_traffic: result.total_traffic
+          };
+          
+          pagination.total = result.total_records;
+        } else {
+          // Агрегированный поиск для группировки по времени
+          if (!filters.fromDate || !filters.toDate) {
+            error.value = 'Для группировки необходимо указать период времени';
+            loading.value = false;
+            return;
+          }
+
+          const aggregateParams = new URLSearchParams({
+            ip: searchIP,
+            start_time: new Date(filters.fromDate).toISOString(),
+            end_time: new Date(filters.toDate).toISOString(),
+            granularity: filters.groupBy
+          });
+          
+          // Добавляем маску, если есть
+          if (currentSearchMask.value) {
+            aggregateParams.append('mask', currentSearchMask.value);
+          }
+          
+          console.log('Aggregating flows with params:', aggregateParams.toString());
+          
+          const response = await apiClient.get(`/flows/aggregate-by-ip?${aggregateParams.toString()}`);
+          console.log('Aggregate response:', response.data);
+          
+          const aggregateResults = response.data || [];
+          
+          // Преобразуем агрегированные данные в формат для отображения
+          traffic.value = aggregateResults.map(item => ({
+            time_period: item.time_period,
+            bytes_in_mb: (item.total_bytes_in / (1024 * 1024)).toFixed(2),
+            bytes_out_mb: (item.total_bytes_out / (1024 * 1024)).toFixed(2),
+            total_bytes_mb: (item.total_bytes / (1024 * 1024)).toFixed(2),
+            direction: 'aggregated'
+          }));
+          
+          // Общая статистика
+          const totalBytesIn = aggregateResults.reduce((sum, item) => sum + item.total_bytes_in, 0);
+          const totalBytesOut = aggregateResults.reduce((sum, item) => sum + item.total_bytes_out, 0);
+          const totalBytes = aggregateResults.reduce((sum, item) => sum + item.total_bytes, 0);
+          
+          stats.value = {
+            total_records: aggregateResults.length,
+            total_bytes_in: totalBytesIn,
+            total_bytes_out: totalBytesOut,
+            total_traffic: totalBytes
+          };
+          
+          pagination.total = aggregateResults.length;
+          pagination.offset = 0; // Сбрасываем пагинацию для агрегированных данных
+        }
         
       } catch (e) {
         error.value = 'Ошибка при загрузке данных трафика';
@@ -437,6 +517,7 @@ export default {
       filters.ipAddress = '';
       filters.fromDate = '';
       filters.toDate = '';
+      filters.groupBy = 'day';
       clientSearchQuery.value = '';
       selectedClient.value = null;
       filteredClients.value = clients.value;

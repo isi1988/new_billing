@@ -395,16 +395,6 @@ func (h *APIHandler) AggregateFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//dateFormat := "YYYY-MM-DD HH24:MI:00"
-	//switch granularity {
-	//case "hour":
-	//	dateFormat = "YYYY-MM-DD HH24:00:00"
-	//case "day":
-	//	dateFormat = "YYYY-MM-DD 00:00:00"
-	//case "month":
-	//	dateFormat = "YYYY-MM-01 00:00:00"
-	//}
-
 	query := fmt.Sprintf(`
 		SELECT date_trunc('%s', timestamp) as time_period, COALESCE(SUM(bytes), 0) as total_bytes
 		FROM flows
@@ -417,6 +407,152 @@ func (h *APIHandler) AggregateFlows(w http.ResponseWriter, r *http.Request) {
 	err = h.db.Select(&results, query, startTime, endTime)
 	if err != nil {
 		log.Printf("Error aggregating flows: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+type AggregationDirectionResult struct {
+	TimePeriod   time.Time `db:"time_period" json:"time_period"`
+	TotalBytesIn int64     `db:"total_bytes_in" json:"total_bytes_in"`
+	TotalBytesOut int64    `db:"total_bytes_out" json:"total_bytes_out"`
+	TotalBytes   int64     `db:"total_bytes" json:"total_bytes"`
+}
+
+func (h *APIHandler) AggregateFlowsByIP(w http.ResponseWriter, r *http.Request) {
+	ipAddress := r.URL.Query().Get("ip")
+	if ipAddress == "" {
+		http.Error(w, "IP address is required", http.StatusBadRequest)
+		return
+	}
+	
+	startTimeStr := r.URL.Query().Get("start_time")
+	endTimeStr := r.URL.Query().Get("end_time")
+	granularity := r.URL.Query().Get("granularity") // hour, day
+	
+	startTime, err := time.Parse(time.RFC3339, startTimeStr)
+	if err != nil {
+		http.Error(w, "Invalid start_time format", http.StatusBadRequest)
+		return
+	}
+
+	endTime, err := time.Parse(time.RFC3339, endTimeStr)
+	if err != nil {
+		http.Error(w, "Invalid end_time format", http.StatusBadRequest)
+		return
+	}
+
+	// Получаем маску, если передана
+	maskStr := r.URL.Query().Get("mask")
+	var subnet string
+	
+	// Добавляем поддержку фильтрации по IP как в SearchFlows
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 3 // start_time и end_time уже займут 1 и 2
+	
+	// Определяем тип фильтрации по IP (копируем логику из SearchFlows)
+	var ipClause string
+	if maskStr != "" {
+		mask, err := strconv.Atoi(maskStr)
+		if err != nil || mask < 0 || mask > 32 {
+			http.Error(w, "Invalid mask: must be between 0 and 32", http.StatusBadRequest)
+			return
+		}
+		subnet = fmt.Sprintf("%s/%d", ipAddress, mask)
+		ipClause = "(src_ip::inet << $" + strconv.Itoa(argIndex) + "::inet OR dst_ip::inet << $" + strconv.Itoa(argIndex) + "::inet)"
+		args = append(args, subnet)
+		argIndex++
+	} else if strings.Contains(ipAddress, "/") {
+		_, ipNet, err := net.ParseCIDR(ipAddress)
+		if err != nil {
+			http.Error(w, "Invalid CIDR notation: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		subnet = ipNet.String()
+		ipClause = "(src_ip::inet << $" + strconv.Itoa(argIndex) + "::inet OR dst_ip::inet << $" + strconv.Itoa(argIndex) + "::inet)"
+		args = append(args, subnet)
+		argIndex++
+	} else if strings.Contains(ipAddress, "*") {
+		likePattern := strings.ReplaceAll(ipAddress, "*", "%")
+		ipClause = "(src_ip LIKE $" + strconv.Itoa(argIndex) + " OR dst_ip LIKE $" + strconv.Itoa(argIndex) + ")"
+		args = append(args, likePattern)
+		argIndex++
+	} else {
+		// Ищем подключения с данным IP и используем их подсети для поиска
+		var connectionSubnets []string
+		err := h.db.Select(&connectionSubnets, `
+			SELECT DISTINCT ip_address || '/' || mask::text as subnet 
+			FROM connections 
+			WHERE ip_address = $1
+		`, ipAddress)
+		
+		if err == nil && len(connectionSubnets) > 0 {
+			var subnetClauses []string
+			for _, subnet := range connectionSubnets {
+				subnetClauses = append(subnetClauses, 
+					"(src_ip::inet << $"+strconv.Itoa(argIndex)+"::inet OR dst_ip::inet << $"+strconv.Itoa(argIndex)+"::inet)")
+				args = append(args, subnet)
+				argIndex++
+			}
+			ipClause = "(" + strings.Join(subnetClauses, " OR ") + ")"
+		} else {
+			ipClause = "(src_ip = $" + strconv.Itoa(argIndex) + " OR dst_ip = $" + strconv.Itoa(argIndex) + ")"
+			args = append(args, ipAddress)
+			argIndex++
+		}
+	}
+	
+	whereClauses = append(whereClauses, ipClause)
+	whereClause := "WHERE timestamp BETWEEN $1 AND $2 AND " + strings.Join(whereClauses, " AND ")
+
+	var query string
+	if subnet != "" {
+		// Для подсетей используем PostgreSQL оператор << для определения направления
+		query = fmt.Sprintf(`
+			SELECT 
+				date_trunc('%s', timestamp) as time_period,
+				COALESCE(SUM(CASE WHEN dst_ip::inet << $%d::inet THEN bytes ELSE 0 END), 0) as total_bytes_in,
+				COALESCE(SUM(CASE WHEN src_ip::inet << $%d::inet THEN bytes ELSE 0 END), 0) as total_bytes_out,
+				COALESCE(SUM(bytes), 0) as total_bytes
+			FROM flows
+			%s
+			GROUP BY time_period
+			ORDER BY time_period
+		`, granularity, argIndex, argIndex+1, whereClause)
+		
+		// Добавляем subnet дважды для входящего и исходящего
+		allArgs := []interface{}{startTime, endTime}
+		allArgs = append(allArgs, args...)
+		allArgs = append(allArgs, subnet, subnet)
+		args = allArgs
+	} else {
+		// Для точного поиска IP используем точные сравнения
+		query = fmt.Sprintf(`
+			SELECT 
+				date_trunc('%s', timestamp) as time_period,
+				COALESCE(SUM(CASE WHEN dst_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_in,
+				COALESCE(SUM(CASE WHEN src_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_out,
+				COALESCE(SUM(bytes), 0) as total_bytes
+			FROM flows
+			%s
+			GROUP BY time_period
+			ORDER BY time_period
+		`, granularity, argIndex, argIndex+1, whereClause)
+		
+		allArgs := []interface{}{startTime, endTime}
+		allArgs = append(allArgs, args...)
+		allArgs = append(allArgs, ipAddress, ipAddress)
+		args = allArgs
+	}
+
+	var results []AggregationDirectionResult
+	err = h.db.Select(&results, query, args...)
+	if err != nil {
+		log.Printf("Error aggregating flows by IP: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
