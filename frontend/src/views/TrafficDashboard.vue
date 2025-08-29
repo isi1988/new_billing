@@ -171,8 +171,8 @@
               </td>
               <td class="text-gray-600">{{ getProtocolName(item.protocol) }}</td>
               <td>
-                <span :class="getDirectionClass(item.direction)">
-                  {{ getDirectionLabel(item.direction) }}
+                <span :class="getDirectionClass(item)">
+                  {{ getDirectionLabel(item) }}
                 </span>
               </td>
               <td class="font-medium">{{ formatBytes(item.bytes) }}</td>
@@ -246,6 +246,9 @@ export default {
     const showClientDropdown = ref(false);
     const filteredClients = ref([]);
     const selectedClient = ref(null);
+    const currentSearchIP = ref('');
+    const currentSearchMask = ref('');
+    const clientConnectionIPs = ref([]);
 
     const filters = reactive({
       clientId: '',
@@ -297,22 +300,32 @@ export default {
       return protocols[protocolNumber] || `Protocol ${protocolNumber}`;
     };
 
-    const getDirectionLabel = (direction) => {
-      switch (direction) {
-        case 'incoming': return 'Входящий';
-        case 'outgoing': return 'Исходящий';
-        case 'mixed': return 'Смешанный';
-        default: return 'Неизвестно';
+    const getDirectionLabel = (item) => {
+      // Используем направление из API ответа
+      if (item.direction === 'incoming') {
+        return 'Входящий';
       }
+      if (item.direction === 'outgoing') {
+        return 'Исходящий';
+      }
+      if (item.direction === 'mixed') {
+        return 'Смешанный';
+      }
+      return 'Неизвестно';
     };
 
-    const getDirectionClass = (direction) => {
-      switch (direction) {
-        case 'incoming': return 'direction-badge incoming';
-        case 'outgoing': return 'direction-badge outgoing';
-        case 'mixed': return 'direction-badge mixed';
-        default: return 'direction-badge';
+    const getDirectionClass = (item) => {
+      // Используем направление из API ответа
+      if (item.direction === 'incoming') {
+        return 'direction-badge incoming';
       }
+      if (item.direction === 'outgoing') {
+        return 'direction-badge outgoing';
+      }
+      if (item.direction === 'mixed') {
+        return 'direction-badge mixed';
+      }
+      return 'direction-badge';
     };
 
     const buildQueryParams = () => {
@@ -349,7 +362,10 @@ export default {
             const clientResponse = await apiClient.get(`/clients/${selectedClient.value.id}/connections`);
             const connections = clientResponse.data || [];
             if (connections.length > 0) {
+              // Сохраняем все IP подключений клиента для определения направления
+              clientConnectionIPs.value = connections.map(conn => conn.ip_address);
               searchIP = connections[0].ip_address;
+              currentSearchMask.value = connections[0].mask;
             } else {
               error.value = 'У выбранного клиента нет подключений';
               loading.value = false;
@@ -360,7 +376,14 @@ export default {
             loading.value = false;
             return;
           }
+        } else {
+          // Если поиск по конкретному IP, очищаем массив подключений клиента
+          clientConnectionIPs.value = [];
+          currentSearchMask.value = '';
         }
+
+        // Сохраняем текущий IP для определения направления трафика
+        currentSearchIP.value = searchIP;
 
         // Формируем параметры запроса
         const params = new URLSearchParams({
@@ -368,6 +391,11 @@ export default {
           page: Math.floor(pagination.offset / pagination.limit) + 1,
           limit: pagination.limit
         });
+        
+        // Добавляем маску, если есть
+        if (currentSearchMask.value) {
+          params.append('mask', currentSearchMask.value);
+        }
         
         if (filters.fromDate) params.append('from', filters.fromDate.split('T')[0]);
         if (filters.toDate) params.append('to', filters.toDate.split('T')[0]);
@@ -428,11 +456,13 @@ export default {
       try {
         // Определяем searchIP аналогично searchTraffic
         let searchIP = filters.ipAddress;
+        let searchMask = '';
         if (selectedClient.value && !searchIP) {
           const clientResponse = await apiClient.get(`/clients/${selectedClient.value.id}/connections`);
           const connections = clientResponse.data || [];
           if (connections.length > 0) {
             searchIP = connections[0].ip_address;
+            searchMask = connections[0].mask;
           } else {
             error.value = 'У выбранного клиента нет подключений';
             loading.value = false;
@@ -444,6 +474,11 @@ export default {
         const params = new URLSearchParams({
           ip: searchIP
         });
+        
+        // Добавляем маску, если есть
+        if (searchMask) {
+          params.append('mask', searchMask);
+        }
         
         if (filters.fromDate) params.append('from', filters.fromDate.split('T')[0]);
         if (filters.toDate) params.append('to', filters.toDate.split('T')[0]);
@@ -561,6 +596,9 @@ export default {
       showClientDropdown,
       filteredClients,
       selectedClient,
+      currentSearchIP,
+      currentSearchMask,
+      clientConnectionIPs,
       getClientDisplayName,
       searchClients,
       selectClient,

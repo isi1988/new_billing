@@ -58,6 +58,10 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IP address is required", http.StatusBadRequest)
 		return
 	}
+	
+	// Получаем маску, если передана
+	maskStr := r.URL.Query().Get("mask")
+	var subnet string
 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -76,16 +80,29 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 	
 	// Определяем тип фильтрации по IP
 	var ipClause string
-	if strings.Contains(ipAddress, "/") {
+	if maskStr != "" {
+		// Формируем CIDR из IP и маски
+		mask, err := strconv.Atoi(maskStr)
+		if err != nil || mask < 0 || mask > 32 {
+			http.Error(w, "Invalid mask: must be between 0 and 32", http.StatusBadRequest)
+			return
+		}
+		subnet = fmt.Sprintf("%s/%d", ipAddress, mask)
+		// Используем PostgreSQL оператор << для проверки вхождения в сеть с приведением типов к inet
+		ipClause = "(src_ip::inet << $" + strconv.Itoa(argIndex) + "::inet OR dst_ip::inet << $" + strconv.Itoa(argIndex) + "::inet)"
+		args = append(args, subnet)
+		argIndex++
+	} else if strings.Contains(ipAddress, "/") {
 		// CIDR notation (e.g., 192.168.1.0/24)
 		_, ipNet, err := net.ParseCIDR(ipAddress)
 		if err != nil {
 			http.Error(w, "Invalid CIDR notation: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		subnet = ipNet.String()
 		// Используем PostgreSQL оператор << для проверки вхождения в сеть с приведением типов к inet
 		ipClause = "(src_ip::inet << $" + strconv.Itoa(argIndex) + "::inet OR dst_ip::inet << $" + strconv.Itoa(argIndex) + "::inet)"
-		args = append(args, ipNet.String())
+		args = append(args, subnet)
 		argIndex++
 	} else if strings.Contains(ipAddress, "*") {
 		// Wildcard notation (e.g., 192.168.1.*)
@@ -94,10 +111,30 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 		args = append(args, likePattern)
 		argIndex++
 	} else {
-		// Точное совпадение IP
-		ipClause = "(src_ip = $" + strconv.Itoa(argIndex) + " OR dst_ip = $" + strconv.Itoa(argIndex) + ")"
-		args = append(args, ipAddress)
-		argIndex++
+		// Ищем подключения с данным IP и используем их подсети для поиска
+		var connectionSubnets []string
+		err := h.db.Select(&connectionSubnets, `
+			SELECT DISTINCT ip_address || '/' || mask::text as subnet 
+			FROM connections 
+			WHERE ip_address = $1
+		`, ipAddress)
+		
+		if err == nil && len(connectionSubnets) > 0 {
+			// Если нашли подключения с таким IP, ищем по их подсетям
+			var subnetClauses []string
+			for _, subnet := range connectionSubnets {
+				subnetClauses = append(subnetClauses, 
+					"(src_ip::inet << $"+strconv.Itoa(argIndex)+"::inet OR dst_ip::inet << $"+strconv.Itoa(argIndex)+"::inet)")
+				args = append(args, subnet)
+				argIndex++
+			}
+			ipClause = "(" + strings.Join(subnetClauses, " OR ") + ")"
+		} else {
+			// Если подключений не найдено, используем точное совпадение IP
+			ipClause = "(src_ip = $" + strconv.Itoa(argIndex) + " OR dst_ip = $" + strconv.Itoa(argIndex) + ")"
+			args = append(args, ipAddress)
+			argIndex++
+		}
 	}
 	
 	whereClauses = append(whereClauses, ipClause)
@@ -155,6 +192,7 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+
 	// Получаем flows с пагинацией
 	flowQuery := fmt.Sprintf(`
 		SELECT timestamp, src_ip, dst_ip, src_port, dst_port, protocol, packets, bytes
@@ -173,37 +211,89 @@ func (h *APIHandler) SearchFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Определяем направление трафика и заполняем поля
+	// Определяем направление трафика и заполняем поля для flows на текущей странице
 	var flows []FlowRecord
+	var pageBytesIn, pageBytesOut int64
+	
 	for _, flow := range flowsFromDB {
-		// Для сетевых масок и wildcard поиска сложнее определить направление,
-		// поэтому просто помечаем как mixed если это не точное совпадение IP
-		if strings.Contains(ipAddress, "/") || strings.Contains(ipAddress, "*") {
-			flow.Direction = "mixed"
-			flow.BytesIn = flow.Bytes / 2  // Примерное разделение
-			flow.BytesOut = flow.Bytes / 2
-		} else if flow.DstIP == ipAddress {
-			// Входящий трафик (точное совпадение)
-			flow.Direction = "incoming"
-			flow.BytesIn = flow.Bytes
-			flow.BytesOut = 0
-		} else {
-			// Исходящий трафик (точное совпадение)
+		// Правильная логика определения направления как в ConnectionStats
+		if flow.SrcIP == ipAddress {
+			// Исходящий трафик - трафик ИЗ этого IP
 			flow.Direction = "outgoing"
 			flow.BytesIn = 0
 			flow.BytesOut = flow.Bytes
+			pageBytesOut += flow.Bytes
+		} else if flow.DstIP == ipAddress {
+			// Входящий трафик - трафик К этому IP
+			flow.Direction = "incoming"
+			flow.BytesIn = flow.Bytes
+			flow.BytesOut = 0
+			pageBytesIn += flow.Bytes
+		} else {
+			// Если используется подсеть/маска, определяем по IP подключения
+			// В этом случае нужно проверить, что поиск шел именно по подсети
+			if subnet != "" || strings.Contains(ipAddress, "/") || strings.Contains(ipAddress, "*") {
+				// Для подсетевого поиска считаем трафик по факту IP адресов
+				if flow.SrcIP == ipAddress {
+					flow.Direction = "outgoing"
+					flow.BytesIn = 0
+					flow.BytesOut = flow.Bytes
+					pageBytesOut += flow.Bytes
+				} else {
+					flow.Direction = "incoming" 
+					flow.BytesIn = flow.Bytes
+					flow.BytesOut = 0
+					pageBytesIn += flow.Bytes
+				}
+			} else {
+				// Fallback для точного поиска
+				flow.Direction = "mixed"
+				flow.BytesIn = flow.Bytes / 2
+				flow.BytesOut = flow.Bytes / 2
+				pageBytesIn += flow.Bytes / 2
+				pageBytesOut += flow.Bytes / 2
+			}
 		}
 		flows = append(flows, flow)
 	}
+
+	// Отдельный запрос для получения всего входящего, исходящего и общего трафика
+	totalQuery := fmt.Sprintf(`
+		SELECT 
+			COALESCE(SUM(CASE WHEN dst_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_in,
+			COALESCE(SUM(CASE WHEN src_ip = $%d THEN bytes ELSE 0 END), 0) as total_bytes_out,
+			COALESCE(SUM(bytes), 0) as total_traffic
+		FROM flows
+		%s
+	`, argIndex, argIndex+1, whereClause)
+	
+	totalArgs := make([]interface{}, len(args))
+	copy(totalArgs, args)
+	totalArgs = append(totalArgs, ipAddress, ipAddress)
+	var totalResult struct {
+		TotalBytesIn  int64 `db:"total_bytes_in"`
+		TotalBytesOut int64 `db:"total_bytes_out"`
+		TotalTraffic  int64 `db:"total_traffic"`
+	}
+	
+	err = h.db.Get(&totalResult, totalQuery, totalArgs...)
+	if err != nil {
+		log.Printf("Error getting total traffic stats: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	
+	totalBytesIn := totalResult.TotalBytesIn
+	totalBytesOut := totalResult.TotalBytesOut
 
 	totalPages := (totalRecords + limit - 1) / limit
 	
 	result := FlowSearchResult{
 		Flows:         flows,
 		TotalRecords:  totalRecords,
-		TotalBytesIn:  stats.TotalBytes / 2, // Примерное разделение для сетей
-		TotalBytesOut: stats.TotalBytes / 2,
-		TotalTraffic:  stats.TotalBytes,
+		TotalBytesIn:  totalBytesIn,
+		TotalBytesOut: totalBytesOut,
+		TotalTraffic:  totalResult.TotalTraffic,
 		Page:          page,
 		Limit:         limit,
 		TotalPages:    totalPages,

@@ -1,25 +1,46 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import apiClient from '@/api/client';
+import DataTable from '@/components/ui/DataTable.vue';
 
+const processedFiles = ref([]);
+const pagination = ref({
+  page: 1,
+  limit: 25,
+  total: 0,
+  totalPages: 0
+});
+const loading = ref(false);
 const systemInfo = ref({
-  firstTrafficFile: null,
-  lastTrafficFile: null,
-  trafficTimeRange: null,
   lastUpdate: null
 });
-
-const loading = ref(false);
 let refreshInterval = null;
 
-async function fetchSystemInfo() {
+// Колонки для таблицы файлов
+const columns = [
+  { key: 'id', label: 'ID' },
+  { key: 'file_name', label: 'Имя файла' },
+  { 
+    key: 'processed_at', 
+    label: 'Дата обработки',
+    formatter: (file) => formatDate(file.processed_at)
+  }
+];
+
+async function fetchProcessedFiles() {
   loading.value = true;
   try {
-    const response = await apiClient.get('/system/info');
-    systemInfo.value = response.data;
+    const response = await apiClient.get('/system/processed-files', {
+      params: {
+        page: pagination.value.page,
+        limit: pagination.value.limit
+      }
+    });
+    processedFiles.value = response.data.files || [];
+    pagination.value = { ...pagination.value, ...response.data.pagination };
     systemInfo.value.lastUpdate = new Date();
   } catch (error) {
-    console.error('Ошибка получения информации о системе:', error);
+    console.error('Ошибка получения обработанных файлов:', error);
   } finally {
     loading.value = false;
   }
@@ -30,23 +51,29 @@ function formatDate(dateString) {
   return new Date(dateString).toLocaleString('ru-RU');
 }
 
-function formatTimeRange() {
-  const info = systemInfo.value;
-  if (!info.firstTrafficFile || !info.lastTrafficFile) return 'Неизвестно';
-  
-  const first = new Date(info.firstTrafficFile);
-  const last = new Date(info.lastTrafficFile);
-  const diffMs = last - first;
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  
-  return `${diffDays} дней ${diffHours} часов`;
+function nextPage() {
+  if (pagination.value.page < pagination.value.totalPages) {
+    pagination.value.page++;
+    fetchProcessedFiles();
+  }
+}
+
+function previousPage() {
+  if (pagination.value.page > 1) {
+    pagination.value.page--;
+    fetchProcessedFiles();
+  }
+}
+
+function changePage(newPage) {
+  pagination.value.page = newPage;
+  fetchProcessedFiles();
 }
 
 onMounted(() => {
-  fetchSystemInfo();
-  // Автоматическое обновление каждые 5 секунд
-  refreshInterval = setInterval(fetchSystemInfo, 5000);
+  fetchProcessedFiles();
+  // Автоматическое обновление каждые 30 секунд
+  refreshInterval = setInterval(fetchProcessedFiles, 30000);
 });
 
 onUnmounted(() => {
@@ -65,31 +92,60 @@ onUnmounted(() => {
     <div class="settings-content">
       <div class="card">
         <div class="card-header">
-          <h2>Информация о трафике</h2>
+          <h2>Обработанные файлы трафика</h2>
           <div class="last-update">
+            <span class="material-icons icon-sm">sync</span>
             Последнее обновление: {{ systemInfo.lastUpdate ? formatDate(systemInfo.lastUpdate) : 'Неизвестно' }}
           </div>
         </div>
         
         <div v-if="loading" class="loading-container">
           <div class="spinner"></div>
-          <span>Загрузка информации о системе...</span>
+          <span>Загрузка обработанных файлов...</span>
         </div>
         
-        <div v-else class="info-grid">
-          <div class="info-item">
-            <label>Первый файл трафика:</label>
-            <span class="value">{{ formatDate(systemInfo.firstTrafficFile) }}</span>
-          </div>
+        <div v-else>
+          <DataTable
+            :items="processedFiles"
+            :columns="columns"
+            :loading="loading"
+            :show-actions="false"
+          />
           
-          <div class="info-item">
-            <label>Последний файл трафика:</label>
-            <span class="value">{{ formatDate(systemInfo.lastTrafficFile) }}</span>
-          </div>
-          
-          <div class="info-item">
-            <label>Доступный период трафика:</label>
-            <span class="value">{{ formatTimeRange() }}</span>
+          <!-- Пагинация -->
+          <div class="pagination-container">
+            <div class="pagination-info">
+              <span>Всего файлов: {{ pagination.total }}</span>
+              <span>Страница {{ pagination.page }} из {{ pagination.totalPages }}</span>
+            </div>
+            <div class="pagination-controls">
+              <button 
+                @click="previousPage"
+                :disabled="pagination.page <= 1"
+                class="btn btn-sm btn-secondary"
+              >
+                <span class="material-icons icon-xs">arrow_back</span>
+                Назад
+              </button>
+              <span class="page-numbers">
+                <button 
+                  v-for="page in Math.min(pagination.totalPages, 5)" 
+                  :key="page"
+                  @click="changePage(page)"
+                  :class="['btn btn-sm', page === pagination.page ? 'btn-primary' : 'btn-secondary']"
+                >
+                  {{ page }}
+                </button>
+              </span>
+              <button 
+                @click="nextPage"
+                :disabled="pagination.page >= pagination.totalPages"
+                class="btn btn-sm btn-secondary"
+              >
+                Далее
+                <span class="material-icons icon-xs">arrow_forward</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -106,15 +162,10 @@ onUnmounted(() => {
           </div>
           
           <div class="info-item">
-            <label>Время работы:</label>
-            <span class="value">Доступно в следующих версиях</span>
-          </div>
-          
-          <div class="info-item">
-            <label>Автообновление:</label>
+            <label>Автообновление файлов:</label>
             <span class="value auto-refresh">
               <span class="material-icons icon-sm">sync</span>
-              Каждые 5 секунд
+              Каждые 30 секунд
             </span>
           </div>
         </div>
@@ -162,6 +213,35 @@ onUnmounted(() => {
   padding: 3rem;
 }
 
+.pagination-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--gray-200);
+}
+
+.pagination-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--gray-600);
+  font-size: 0.875rem;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.page-numbers {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0.5rem;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -204,9 +284,30 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
+@media (max-width: 768px) {
+  .pagination-container {
+    flex-direction: column;
+    gap: 1rem;
+    align-items: stretch;
+  }
+  
+  .pagination-info {
+    text-align: center;
+  }
+  
+  .pagination-controls {
+    justify-content: center;
+  }
+}
+
 @media (min-width: 768px) {
   .info-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  
+  .pagination-info {
+    flex-direction: row;
+    gap: 2rem;
   }
 }
 

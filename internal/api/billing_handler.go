@@ -2094,29 +2094,35 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 	var args []interface{}
 	argIndex := 1
 
-	// Получаем IP адрес подключения для фильтрации flows
-	var connectionIP string
-	err = h.DB.Get(&connectionIP, "SELECT ip_address FROM connections WHERE id = $1", connectionID)
+	// Получаем IP адрес и маску подключения для фильтрации flows
+	var connInfo struct {
+		IPAddress string `db:"ip_address"`
+		Mask      int    `db:"mask"`
+	}
+	err = h.DB.Get(&connInfo, "SELECT ip_address, mask FROM connections WHERE id = $1", connectionID)
 	if err != nil {
-		http.Error(w, "Failed to get connection IP: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to get connection info: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Формируем CIDR нотацию для поиска по подсети
+	subnet := fmt.Sprintf("%s/%d", connInfo.IPAddress, connInfo.Mask)
 	
-	// Основной запрос для статистики по подключению используя flows данные
+	// Основной запрос для статистики по подключению используя flows данные с поиском по подсети
 	baseQuery := `
 		SELECT 
 			COUNT(*) as total_records,
-			COALESCE(SUM(CASE WHEN dst_ip = $` + strconv.Itoa(argIndex) + ` THEN bytes ELSE 0 END), 0) as total_bytes_in,
-			COALESCE(SUM(CASE WHEN src_ip = $` + strconv.Itoa(argIndex) + ` THEN bytes ELSE 0 END), 0) as total_bytes_out,
+			COALESCE(SUM(CASE WHEN dst_ip::inet << $` + strconv.Itoa(argIndex) + `::inet THEN bytes ELSE 0 END), 0) as total_bytes_in,
+			COALESCE(SUM(CASE WHEN src_ip::inet << $` + strconv.Itoa(argIndex) + `::inet THEN bytes ELSE 0 END), 0) as total_bytes_out,
 			COALESCE(SUM(bytes), 0) as total_traffic,
 			COALESCE(AVG(bytes), 0) as avg_traffic,
 			COALESCE(MAX(bytes), 0) as max_traffic,
 			COALESCE(MIN(bytes), 0) as min_traffic,
 			COUNT(DISTINCT DATE(timestamp)) as active_days
 		FROM flows
-		WHERE (src_ip = $` + strconv.Itoa(argIndex) + ` OR dst_ip = $` + strconv.Itoa(argIndex) + `)`
+		WHERE (src_ip::inet << $` + strconv.Itoa(argIndex) + `::inet OR dst_ip::inet << $` + strconv.Itoa(argIndex) + `::inet)`
 
-	args = append(args, connectionIP)
+	args = append(args, subnet)
 	argIndex++
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
@@ -2205,9 +2211,9 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 			DATE(timestamp) as date,
 			COALESCE(SUM(bytes), 0) as daily_traffic
 		FROM flows
-		WHERE (src_ip = $1 OR dst_ip = $1)
+		WHERE (src_ip::inet << $1::inet OR dst_ip::inet << $1::inet)
 	`
-	topDaysArgs := []interface{}{connectionIP}
+	topDaysArgs := []interface{}{subnet}
 	argIdx := 2
 
 	if fromDate := queryParams.Get("from"); fromDate != "" {
@@ -2909,4 +2915,69 @@ func (h *BillingHandler) GetIPInfo(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// @Summary      Получить обработанные файлы
+// @Description  Возвращает список обработанных файлов с пагинацией
+// @Tags         System
+// @Produce      json
+// @Param        page   query     int     false  "Номер страницы (по умолчанию 1)"
+// @Param        limit  query     int     false  "Количество записей на страницу (по умолчанию 25)"
+// @Success      200    {object}  map[string]interface{}
+// @Failure      500    {object}  map[string]string
+// @Router       /system/processed-files [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetProcessedFiles(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 {
+		limit = 25
+	}
+	offset := (page - 1) * limit
+
+	// Получаем общее количество обработанных файлов
+	var totalRecords int
+	err := h.DB.Get(&totalRecords, "SELECT COUNT(*) FROM processed_files")
+	if err != nil {
+		http.Error(w, "Failed to count processed files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Получаем обработанные файлы с пагинацией
+	type ProcessedFile struct {
+		ID           int       `json:"id" db:"id"`
+		FileName     string    `json:"file_name" db:"file_name"`
+		ProcessedAt  time.Time `json:"processed_at" db:"processed_at"`
+	}
+
+	var files []ProcessedFile
+	query := `
+		SELECT id, file_name, processed_at 
+		FROM processed_files 
+		ORDER BY processed_at DESC 
+		LIMIT $1 OFFSET $2
+	`
+	err = h.DB.Select(&files, query, limit, offset)
+	if err != nil {
+		http.Error(w, "Failed to get processed files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	totalPages := (totalRecords + limit - 1) / limit
+
+	response := map[string]interface{}{
+		"files":         files,
+		"pagination": map[string]interface{}{
+			"page":         page,
+			"limit":        limit,
+			"total":        totalRecords,
+			"totalPages":   totalPages,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

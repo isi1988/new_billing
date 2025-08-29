@@ -135,6 +135,7 @@ func main() {
 	
 	// Системная информация
 	managerRouter.HandleFunc("/system/info", billingHandler.GetSystemInfo).Methods("GET")
+	managerRouter.HandleFunc("/system/processed-files", billingHandler.GetProcessedFiles).Methods("GET")
 	
 	// Информация об IP адресах
 	managerRouter.HandleFunc("/ip/{ip}/info", billingHandler.GetIPInfo).Methods("GET")

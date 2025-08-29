@@ -61,7 +61,7 @@
           <h2 class="card-title">Информация о подключении</h2>
           <div class="connection-info-grid">
             <div class="connection-info-section">
-              <p><strong>IP адрес:</strong> {{ stats.connection.ip_address }}/{{ stats.connection.mask }}</p>
+              <p><strong>IP адрес:</strong> {{ stats.connection.ip_address }}{{ stats.connection.mask ? '/' + stats.connection.mask : '' }}</p>
               <p><strong>Адрес:</strong> {{ stats.connection.address }}</p>
               <p><strong>Тип подключения:</strong> {{ stats.connection.connection_type }}</p>
               <p><strong>Статус:</strong> 
@@ -178,8 +178,8 @@
                 </td>
                 <td class="text-gray-600">{{ getProtocolName(item.protocol) }}</td>
                 <td>
-                  <span :class="getDirectionClass(item.direction)">
-                    {{ getDirectionLabel(item.direction) }}
+                  <span :class="getDirectionClass(item)">
+                    {{ getDirectionLabel(item) }}
                   </span>
                 </td>
                 <td class="font-medium">{{ formatBytes(item.bytes) }}</td>
@@ -291,6 +291,7 @@ export default {
     // Flows data
     const flows = ref([]);
     const flowsLoading = ref(false);
+    const currentConnectionIP = ref('');
     const flowsPagination = reactive({
       limit: 25,
       offset: 0,
@@ -346,22 +347,32 @@ export default {
       return protocols[protocolNumber] || `Protocol ${protocolNumber}`;
     };
 
-    const getDirectionLabel = (direction) => {
-      switch (direction) {
-        case 'incoming': return 'Входящий';
-        case 'outgoing': return 'Исходящий';
-        case 'mixed': return 'Смешанный';
-        default: return 'Неизвестно';
+    const getDirectionLabel = (item) => {
+      // Используем направление из API ответа
+      if (item.direction === 'incoming') {
+        return 'Входящий';
       }
+      if (item.direction === 'outgoing') {
+        return 'Исходящий';
+      }
+      if (item.direction === 'mixed') {
+        return 'Смешанный';
+      }
+      return 'Неизвестно';
     };
 
-    const getDirectionClass = (direction) => {
-      switch (direction) {
-        case 'incoming': return 'direction-badge incoming';
-        case 'outgoing': return 'direction-badge outgoing';
-        case 'mixed': return 'direction-badge mixed';
-        default: return 'direction-badge';
+    const getDirectionClass = (item) => {
+      // Используем направление из API ответа
+      if (item.direction === 'incoming') {
+        return 'direction-badge incoming';
       }
+      if (item.direction === 'outgoing') {
+        return 'direction-badge outgoing';
+      }
+      if (item.direction === 'mixed') {
+        return 'direction-badge mixed';
+      }
+      return 'direction-badge';
     };
 
     const loadConnectionStats = async () => {
@@ -409,14 +420,21 @@ export default {
       flowsLoading.value = true;
       
       try {
-        // Используем IP адрес из статистики подключения
+        // Используем IP адрес и маску из статистики подключения
         const searchIP = stats.value.connection.ip_address;
+        const searchMask = stats.value.connection.mask;
+        currentConnectionIP.value = searchIP;
         
         const params = new URLSearchParams({
           ip: searchIP,
           page: Math.floor(flowsPagination.offset / flowsPagination.limit) + 1,
           limit: flowsPagination.limit
         });
+        
+        // Добавляем маску, если есть
+        if (searchMask) {
+          params.append('mask', searchMask);
+        }
         
         if (filters.fromDate) params.append('from', filters.fromDate);
         if (filters.toDate) params.append('to', filters.toDate);
@@ -471,6 +489,7 @@ export default {
       filters,
       flows,
       flowsLoading,
+      currentConnectionIP,
       flowsPagination,
       currentFlowsPage,
       totalFlowsPages,
