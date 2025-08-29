@@ -84,6 +84,9 @@ func main() {
 	managerRouter.HandleFunc("/clients/{id:[0-9]+}/block", billingHandler.BlockClient).Methods("POST")
 	managerRouter.HandleFunc("/clients/{id:[0-9]+}/unblock", billingHandler.UnblockClient).Methods("POST")
 
+	// Договоры по клиенту
+	managerRouter.HandleFunc("/clients/{client_id:[0-9]+}/contracts", billingHandler.GetContractsByClient).Methods("GET")
+
 	// CRUD для Оборудования
 	managerRouter.HandleFunc("/equipment", billingHandler.GetAllEquipment).Methods("GET")
 	managerRouter.HandleFunc("/equipment", billingHandler.CreateEquipment).Methods("POST")

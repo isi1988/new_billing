@@ -418,8 +418,11 @@ function clearFilters() {
 .block-btn {
   background: linear-gradient(135deg, var(--error-500) 0%, var(--error-600) 100%);
   color: white;
+  border: none;
+  cursor: pointer;
   transition: all 0.2s ease-in-out;
   box-shadow: 0 2px 4px rgba(234, 67, 53, 0.2);
+  border-radius: 50%;
 }
 
 .block-btn:hover {
@@ -431,8 +434,11 @@ function clearFilters() {
 .unblock-btn {
   background: linear-gradient(135deg, var(--success-500) 0%, var(--success-600) 100%);
   color: white;
+  border: none;
+  cursor: pointer;
   transition: all 0.2s ease-in-out;
   box-shadow: 0 2px 4px rgba(52, 168, 83, 0.2);
+  border-radius: 50%;
 }
 
 .unblock-btn:hover {
@@ -600,5 +606,21 @@ function clearFilters() {
 
 .btn-xs .icon {
   font-size: 0.625rem;
+}
+
+.edit-btn {
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+  border-radius: 50%;
+}
+
+.edit-btn:hover {
+  background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
 }
 </style>

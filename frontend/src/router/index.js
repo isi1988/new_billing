@@ -11,6 +11,7 @@ import ContractManagement from '../views/ContractManagement.vue';
 import ClientManagement from "../views/ClientManagement.vue";
 import TrafficDashboard from "../views/TrafficDashboard.vue";
 import ContractStats from "../views/ContractStats.vue";
+import ConnectionStats from "../views/ConnectionStats.vue";
 import IssueManagement from "../views/IssueManagement.vue";
 
 const routes = [
@@ -84,6 +85,13 @@ const routes = [
       path: '/contracts/:id/stats',
       name: 'ContractStats',
       component: ContractStats,
+      meta: { requiresAuth: true },
+    },
+    {
+      // Статистика по подключению
+      path: '/connections/:id/stats',
+      name: 'ConnectionStats',
+      component: ConnectionStats,
       meta: { requiresAuth: true },
     },
     {

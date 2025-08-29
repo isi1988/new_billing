@@ -703,6 +703,7 @@ func (h *BillingHandler) GetConnections(w http.ResponseWriter, r *http.Request) 
 		IsBlocked      bool   `json:"is_blocked" db:"is_blocked"`
 		ContractNumber string `json:"contract_number" db:"contract_number"`
 		TariffName     string `json:"tariff_name" db:"tariff_name"`
+		EquipmentModel string `json:"equipment_model" db:"equipment_model"`
 	}
 
 	var connectionsWithDetails []ConnectionWithDetails
@@ -712,10 +713,12 @@ func (h *BillingHandler) GetConnections(w http.ResponseWriter, r *http.Request) 
 			c.id, c.equipment_id, c.contract_id, c.address, c.connection_type,
 			c.tariff_id, c.ip_address, c.mask, c.is_blocked,
 			cont.number as contract_number,
-			t.name as tariff_name
+			t.name as tariff_name,
+			e.model as equipment_model
 		FROM connections c
 		LEFT JOIN contracts cont ON c.contract_id = cont.id
 		LEFT JOIN tariffs t ON c.tariff_id = t.id
+		LEFT JOIN equipment e ON c.equipment_id = e.id
 		ORDER BY c.id
 	`
 
@@ -842,6 +845,48 @@ func (h *BillingHandler) GetConnectionsByContract(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(connections)
+}
+
+// @Summary      Получить договоры по клиенту
+// @Description  Возвращает список всех договоров для конкретного клиента
+// @Tags         Contracts
+// @Produce      json
+// @Param        client_id path int true "ID клиента"
+// @Success      200  {array}   object{id=int,number=string,sign_date=string,is_blocked=bool,connections_count=int}
+// @Failure      500  {object}  map[string]string
+// @Router       /clients/{client_id}/contracts [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetContractsByClient(w http.ResponseWriter, r *http.Request) {
+	clientID := mux.Vars(r)["client_id"]
+
+	type ContractWithDetails struct {
+		ID               int    `json:"id" db:"id"`
+		Number           string `json:"number" db:"number"`
+		SignDate         string `json:"sign_date" db:"sign_date"`
+		IsBlocked        bool   `json:"is_blocked" db:"is_blocked"`
+		ConnectionsCount int    `json:"connections_count" db:"connections_count"`
+	}
+
+	var contracts []ContractWithDetails
+
+	query := `
+		SELECT 
+			c.id, c.number, c.sign_date, c.is_blocked,
+			COALESCE(COUNT(conn.id), 0) as connections_count
+		FROM contracts c
+		LEFT JOIN connections conn ON c.id = conn.contract_id
+		WHERE c.client_id = $1
+		GROUP BY c.id, c.number, c.sign_date, c.is_blocked
+		ORDER BY c.id
+	`
+
+	if err := h.DB.Select(&contracts, query, clientID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contracts)
 }
 
 // @Summary      Заблокировать подключение
@@ -1608,6 +1653,7 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 			c.id,
 			c.address,
 			c.ip_address,
+			c.mask,
 			c.connection_type,
 			c.is_blocked,
 			ct.id as contract_id,
@@ -1629,6 +1675,7 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 		ID             int     `db:"id"`
 		Address        string  `db:"address"`
 		IPAddress      string  `db:"ip_address"`
+		Mask           int     `db:"mask"`
 		ConnectionType string  `db:"connection_type"`
 		IsBlocked      bool    `db:"is_blocked"`
 		ContractID     int     `db:"contract_id"`
@@ -1708,6 +1755,7 @@ func (h *BillingHandler) GetConnectionStats(w http.ResponseWriter, r *http.Reque
 			"id":              connectionInfo.ID,
 			"address":         connectionInfo.Address,
 			"ip_address":      connectionInfo.IPAddress,
+			"mask":            connectionInfo.Mask,
 			"connection_type": connectionInfo.ConnectionType,
 			"is_blocked":      connectionInfo.IsBlocked,
 			"contract_id":     connectionInfo.ContractID,

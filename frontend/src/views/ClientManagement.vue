@@ -417,4 +417,134 @@ function clearFilters() {
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(52, 168, 83, 0.3);
 }
+
+.contracts-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary-600);
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease-in-out;
+}
+
+.contracts-toggle:hover {
+  background: var(--primary-50);
+  color: var(--primary-700);
+}
+
+.contracts-toggle.expanded {
+  color: var(--primary-700);
+}
+
+.toggle-icon {
+  transition: transform 0.2s ease-in-out;
+}
+
+.contracts-toggle.expanded .toggle-icon {
+  transform: rotate(180deg);
+}
+
+.contracts-expanded {
+  padding: 16px;
+  background: var(--gray-50);
+  border-top: 1px solid var(--gray-200);
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--gray-600);
+  padding: 20px;
+  justify-content: center;
+}
+
+.no-contracts {
+  text-align: center;
+  padding: 20px;
+  color: var(--gray-600);
+}
+
+.contracts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.contracts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.contract-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: white;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  transition: all 0.2s ease-in-out;
+}
+
+.contract-item:hover {
+  border-color: var(--primary-300);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.contract-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.contract-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.contract-main .number {
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.contract-main .sign-date {
+  color: var(--gray-600);
+  font-size: 14px;
+}
+
+.contract-details {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--gray-600);
+}
+
+.contract-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.edit-btn {
+  background: linear-gradient(135deg, var(--primary-500) 0%, var(--primary-600) 100%);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+.edit-btn:hover {
+  background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-700) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+}
 </style>
