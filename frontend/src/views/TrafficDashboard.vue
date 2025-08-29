@@ -139,30 +139,41 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Клиент</th>
-              <th>IP Адрес</th>
               <th>Время</th>
-              <th>Входящий трафик</th>
-              <th>Исходящий трафик</th>
-              <th>Общий трафик</th>
+              <th>Источник</th>
+              <th>Назначение</th>
+              <th>Протокол</th>
+              <th>Направление</th>
+              <th>Трафик</th>
+              <th>Пакеты</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="traffic.length === 0">
-              <td colspan="6" class="text-center text-gray-500">Нет данных для отображения</td>
+              <td colspan="7" class="text-center text-gray-500">Нет данных для отображения</td>
             </tr>
-            <tr v-for="item in traffic" :key="item.id">
-              <td>
-                <div>
-                  <div class="font-medium text-gray-900">{{ item.client_name || 'N/A' }}</div>
-                  <div class="text-sm text-gray-500">{{ item.client_email }}</div>
+            <tr v-for="item in traffic" :key="item.timestamp + item.src_ip + item.dst_ip">
+              <td class="text-gray-900">{{ formatDateTime(item.timestamp) }}</td>
+              <td class="text-gray-700">
+                <div class="flow-endpoint">
+                  <div class="font-medium">{{ item.src_ip }}</div>
+                  <div class="text-xs text-gray-500">{{ item.src_port }}</div>
                 </div>
               </td>
-              <td class="text-gray-900">{{ item.ip_address }}</td>
-              <td class="text-gray-900">{{ formatDateTime(item.timestamp) }}</td>
-              <td class="text-success">{{ formatBytes(item.bytes_in) }}</td>
-              <td class="text-primary">{{ formatBytes(item.bytes_out) }}</td>
-              <td class="font-medium text-gray-900">{{ formatBytes(item.total_traffic) }}</td>
+              <td class="text-gray-700">
+                <div class="flow-endpoint">
+                  <div class="font-medium">{{ item.dst_ip }}</div>
+                  <div class="text-xs text-gray-500">{{ item.dst_port }}</div>
+                </div>
+              </td>
+              <td class="text-gray-600">{{ getProtocolName(item.protocol) }}</td>
+              <td>
+                <span :class="getDirectionClass(item.direction)">
+                  {{ getDirectionLabel(item.direction) }}
+                </span>
+              </td>
+              <td class="font-medium">{{ formatBytes(item.bytes) }}</td>
+              <td class="text-gray-600">{{ item.packets }}</td>
             </tr>
           </tbody>
         </table>
@@ -266,6 +277,29 @@ export default {
       });
     };
 
+    // Вспомогательные функции для flows
+    const getProtocolName = (protocolNumber) => {
+      const protocols = {
+        1: 'ICMP',
+        6: 'TCP',
+        17: 'UDP',
+        47: 'GRE',
+        50: 'ESP',
+        51: 'AH'
+      };
+      return protocols[protocolNumber] || `Protocol ${protocolNumber}`;
+    };
+
+    const getDirectionLabel = (direction) => {
+      return direction === 'incoming' ? 'Входящий' : 'Исходящий';
+    };
+
+    const getDirectionClass = (direction) => {
+      return direction === 'incoming' 
+        ? 'direction-badge incoming' 
+        : 'direction-badge outgoing';
+    };
+
     const buildQueryParams = () => {
       const params = new URLSearchParams();
       
@@ -285,32 +319,66 @@ export default {
       error.value = null;
       
       try {
-        const queryString = buildQueryParams();
-        console.log('Searching traffic with params:', queryString);
+        // Если выбран клиент и нет конкретного IP-адреса, получаем все IP клиента
+        let searchIPs = [];
+        if (selectedClient.value && !filters.ipAddress) {
+          try {
+            const clientIPsResponse = await apiClient.get(`/clients/${selectedClient.value.id}/ips`);
+            searchIPs = clientIPsResponse.data.ip_addresses || [];
+            console.log(`Found ${searchIPs.length} IP addresses for client:`, searchIPs);
+          } catch (e) {
+            console.log('Could not fetch client IPs:', e.message);
+          }
+        }
         
-        // Получаем данные трафика
-        const trafficResponse = await apiClient.get(`/traffic?${queryString}`);
-        console.log('Traffic response:', trafficResponse);
-        traffic.value = trafficResponse.data || [];
+        // Определяем, какой IP использовать для поиска
+        let searchIP = filters.ipAddress;
+        if (!searchIP && searchIPs.length > 0) {
+          // Если не указан конкретный IP, но есть IP клиента, используем первый
+          // В дальнейшем можно модифицировать для поиска по всем IP клиента
+          searchIP = searchIPs[0];
+        }
         
-        // Получаем статистику
-        const statsParams = new URLSearchParams();
-        if (filters.clientId) statsParams.append('client_id', filters.clientId);
-        if (filters.ipAddress) statsParams.append('ip_address', filters.ipAddress);
-        if (filters.fromDate) statsParams.append('from', filters.fromDate.split('T')[0]);
-        if (filters.toDate) statsParams.append('to', filters.toDate.split('T')[0]);
+        if (!searchIP) {
+          error.value = 'Необходимо указать IP-адрес или выбрать клиента';
+          loading.value = false;
+          return;
+        }
+
+        // Формируем параметры запроса
+        const params = new URLSearchParams({
+          ip: searchIP,
+          page: Math.floor(pagination.offset / pagination.limit) + 1,
+          limit: pagination.limit
+        });
         
-        console.log('Stats params:', statsParams.toString());
-        const statsResponse = await apiClient.get(`/traffic/stats?${statsParams.toString()}`);
-        console.log('Stats response:', statsResponse);
-        stats.value = statsResponse.data;
+        if (filters.fromDate) params.append('from', filters.fromDate.split('T')[0]);
+        if (filters.toDate) params.append('to', filters.toDate.split('T')[0]);
         
-        // Обновляем общее количество записей для пагинации
-        pagination.total = stats.value.total_records;
+        console.log('Searching flows with params:', params.toString());
+        
+        // Получаем flows данные
+        const response = await apiClient.get(`/flows/search?${params.toString()}`);
+        console.log('Flows response:', response.data);
+        
+        const result = response.data;
+        traffic.value = result.flows || [];
+        
+        // Обновляем статистику и пагинацию из ответа
+        stats.value = {
+          total_records: result.total_records,
+          total_bytes_in: result.total_bytes_in,
+          total_bytes_out: result.total_bytes_out,
+          total_traffic: result.total_traffic
+        };
+        
+        pagination.total = result.total_records;
         
       } catch (e) {
         error.value = 'Ошибка при загрузке данных трафика';
         console.error('Search traffic error:', e);
+        traffic.value = [];
+        stats.value = null;
       } finally {
         loading.value = false;
       }
@@ -451,7 +519,11 @@ export default {
       getClientDisplayName,
       searchClients,
       selectClient,
-      hideClientDropdown
+      hideClientDropdown,
+      // Flow helpers
+      getProtocolName,
+      getDirectionLabel,
+      getDirectionClass
     };
   }
 };
@@ -615,5 +687,30 @@ export default {
     right: 1rem;
     max-height: 50vh;
   }
+}
+
+/* Стили для flows таблицы */
+.flow-endpoint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.direction-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.direction-badge.incoming {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.direction-badge.outgoing {
+  background-color: #fef3c7;
+  color: #92400e;
 }
 </style>

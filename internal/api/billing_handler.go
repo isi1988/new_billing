@@ -1324,6 +1324,40 @@ func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(response)
 }
 
+// @Summary      Получить IP-адреса клиента
+// @Description  Возвращает все IP-адреса подключений клиента
+// @Tags         Clients
+// @Produce      json
+// @Param        id   path      int  true  "ID клиента"
+// @Success      200  {array}   string
+// @Failure      404  {object}  map[string]string
+// @Router       /clients/{id}/ips [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetClientIPs(w http.ResponseWriter, r *http.Request) {
+	clientID := mux.Vars(r)["id"]
+	
+	var ips []string
+	query := `
+		SELECT DISTINCT c.ip_address
+		FROM connections c
+		JOIN contracts ct ON c.contract_id = ct.id
+		WHERE ct.client_id = $1 AND c.is_blocked = false
+		ORDER BY c.ip_address
+	`
+	
+	err := h.DB.Select(&ips, query, clientID)
+	if err != nil {
+		http.Error(w, "Client not found or no connections", http.StatusNotFound)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"client_id": clientID,
+		"ip_addresses": ips,
+	})
+}
+
 // @Summary      Экспорт данных трафика в CSV
 // @Description  Экспортирует данные трафика в CSV формате с возможностью фильтрации
 // @Tags         Traffic

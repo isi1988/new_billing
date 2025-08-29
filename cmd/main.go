@@ -86,6 +86,7 @@ func main() {
 
 	// Договоры по клиенту
 	managerRouter.HandleFunc("/clients/{client_id:[0-9]+}/contracts", billingHandler.GetContractsByClient).Methods("GET")
+	managerRouter.HandleFunc("/clients/{id:[0-9]+}/ips", billingHandler.GetClientIPs).Methods("GET")
 
 	// CRUD для Оборудования
 	managerRouter.HandleFunc("/equipment", billingHandler.GetAllEquipment).Methods("GET")

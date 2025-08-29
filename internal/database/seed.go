@@ -70,10 +70,29 @@ func SeedBasicData(db *sqlx.DB) {
 	log.Println("Seeding basic data if needed...")
 
 	// Проверяем наличие базовых данных
-	var clientCount int
+	var clientCount, equipmentCount int
 	err := db.Get(&clientCount, "SELECT COUNT(*) FROM clients")
-	if err != nil || clientCount > 0 {
-		return // Данные уже есть или ошибка
+	if err != nil {
+		log.Printf("Error checking client count: %v", err)
+		return
+	}
+	
+	err = db.Get(&equipmentCount, "SELECT COUNT(*) FROM equipment")
+	if err != nil {
+		log.Printf("Error checking equipment count: %v", err)
+		return
+	}
+
+	// Если есть клиенты но нет оборудования, создаем только оборудование
+	if clientCount > 0 && equipmentCount == 0 {
+		log.Println("Creating missing equipment data...")
+		seedEquipment(db)
+		return
+	}
+	
+	// Если есть и клиенты и оборудование, ничего не делаем
+	if clientCount > 0 {
+		return
 	}
 
 	log.Println("Creating basic test data...")
@@ -170,42 +189,7 @@ func SeedBasicData(db *sqlx.DB) {
 	}
 
 	// Создаем тестовое оборудование
-	testEquipment := []struct {
-		Model       string
-		Description string
-		MACAddress  string
-	}{
-		{
-			Model:       "Cisco ISR4321",
-			Description: "Маршрутизатор для малого офиса",
-			MACAddress:  "00:1B:44:11:3A:B7",
-		},
-		{
-			Model:       "TP-Link Archer C7",
-			Description: "WiFi роутер для дома",
-			MACAddress:  "00:1B:44:11:3A:B8",
-		},
-		{
-			Model:       "Mikrotik hEX S",
-			Description: "Профессиональный маршрутизатор",
-			MACAddress:  "00:1B:44:11:3A:B9",
-		},
-	}
-
-	equipmentIDs := make([]int, 0, len(testEquipment))
-	for _, equip := range testEquipment {
-		var id int
-		err := db.QueryRow(`
-			INSERT INTO equipment (model, description, mac_address)
-			VALUES ($1, $2, $3) RETURNING id
-		`, equip.Model, equip.Description, equip.MACAddress).Scan(&id)
-
-		if err != nil {
-			log.Printf("Error creating equipment: %v", err)
-			continue
-		}
-		equipmentIDs = append(equipmentIDs, id)
-	}
+	equipmentIDs := seedEquipment(db)
 
 	// Создаем договоры
 	contractIDs := make([]int, 0, len(clientIDs))
@@ -271,4 +255,56 @@ func generateAddress(index int) string {
 		"г. Москва, пр. Мира, д. 25, офис 301",
 	}
 	return addresses[index%len(addresses)]
+}
+
+func seedEquipment(db *sqlx.DB) []int {
+	testEquipment := []struct {
+		Model       string
+		Description string
+		MACAddress  string
+	}{
+		{
+			Model:       "Cisco ISR4321",
+			Description: "Маршрутизатор для малого офиса",
+			MACAddress:  "00:1B:44:11:3A:B7",
+		},
+		{
+			Model:       "TP-Link Archer C7",
+			Description: "WiFi роутер для дома",
+			MACAddress:  "00:1B:44:11:3A:B8",
+		},
+		{
+			Model:       "Mikrotik hEX S",
+			Description: "Профессиональный маршрутизатор",
+			MACAddress:  "00:1B:44:11:3A:B9",
+		},
+		{
+			Model:       "Huawei AR2220",
+			Description: "Корпоративный маршрутизатор",
+			MACAddress:  "00:1B:44:11:3A:C0",
+		},
+		{
+			Model:       "Ubiquiti EdgeRouter",
+			Description: "Высокопроизводительный роутер",
+			MACAddress:  "00:1B:44:11:3A:C1",
+		},
+	}
+
+	equipmentIDs := make([]int, 0, len(testEquipment))
+	for _, equip := range testEquipment {
+		var id int
+		err := db.QueryRow(`
+			INSERT INTO equipment (model, description, mac_address)
+			VALUES ($1, $2, $3) RETURNING id
+		`, equip.Model, equip.Description, equip.MACAddress).Scan(&id)
+
+		if err != nil {
+			log.Printf("Error creating equipment: %v", err)
+			continue
+		}
+		equipmentIDs = append(equipmentIDs, id)
+		log.Printf("Created equipment: %s (ID: %d)", equip.Model, id)
+	}
+	
+	return equipmentIDs
 }

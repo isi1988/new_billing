@@ -287,7 +287,7 @@ function clearFilters() {
           :class="{ 'expanded': expandedClients.has(item.id) }"
         >
           <span class="count">{{ item.contracts_count || '0' }}</span>
-          <span class="material-icons toggle-icon">{{ expandedClients.has(item.id) ? 'expand_less' : 'expand_more' }}</span>
+          <span class="material-icons icon-sm toggle-icon">{{ expandedClients.has(item.id) ? 'expand_less' : 'expand_more' }}</span>
         </button>
       </template>
 

@@ -47,6 +47,20 @@ async function fetchRelatedData() {
 onMounted(fetchRelatedData);
 
 function handleSubmit() {
+  // Валидация: проверяем, что все обязательные поля заполнены
+  if (!form.value.equipment_id) {
+    alert('Пожалуйста, выберите оборудование');
+    return;
+  }
+  if (!form.value.contract_id) {
+    alert('Пожалуйста, выберите договор');
+    return;
+  }
+  if (!form.value.tariff_id) {
+    alert('Пожалуйста, выберите тариф');
+    return;
+  }
+
   // Преобразуем числовые поля
   const dataToSave = {
     ...form.value,
@@ -55,6 +69,21 @@ function handleSubmit() {
     contract_id: parseInt(form.value.contract_id, 10),
     tariff_id: parseInt(form.value.tariff_id, 10),
   };
+  
+  // Проверяем, что ID действительно числа и больше 0
+  if (isNaN(dataToSave.equipment_id) || dataToSave.equipment_id <= 0) {
+    alert('Некорректный ID оборудования');
+    return;
+  }
+  if (isNaN(dataToSave.contract_id) || dataToSave.contract_id <= 0) {
+    alert('Некорректный ID договора');
+    return;
+  }
+  if (isNaN(dataToSave.tariff_id) || dataToSave.tariff_id <= 0) {
+    alert('Некорректный ID тарифа');
+    return;
+  }
+
   emit('save', dataToSave);
 }
 </script>
@@ -90,12 +119,17 @@ function handleSubmit() {
 
       <div class="form-group">
         <label for="equipment">Оборудование</label>
-        <select id="equipment" v-model="form.equipment_id" required>
-          <option :value="null" disabled>Выберите оборудование</option>
+        <select id="equipment" v-model="form.equipment_id" required :disabled="relatedData.equipment.length === 0">
+          <option :value="null" disabled>
+            {{ relatedData.equipment.length === 0 ? 'Нет доступного оборудования' : 'Выберите оборудование' }}
+          </option>
           <option v-for="e in relatedData.equipment" :key="e.id" :value="e.id">
             {{ e.model }} ({{ e.mac_address }})
           </option>
         </select>
+        <div v-if="!isLoadingRelated && relatedData.equipment.length === 0" class="error-message">
+          ⚠️ В базе данных нет доступного оборудования. Обратитесь к администратору.
+        </div>
       </div>
 
       <div class="form-group">
@@ -116,7 +150,13 @@ function handleSubmit() {
 
     <div class="form-actions">
       <button type="button" class="btn btn-secondary" @click="$emit('cancel')">Отмена</button>
-      <button type="submit" class="btn btn-primary" :disabled="isLoadingRelated">Сохранить</button>
+      <button 
+        type="submit" 
+        class="btn btn-primary" 
+        :disabled="isLoadingRelated || relatedData.equipment.length === 0 || relatedData.contracts.length === 0 || relatedData.tariffs.length === 0"
+      >
+        Сохранить
+      </button>
     </div>
   </form>
 </template>
@@ -134,5 +174,14 @@ function handleSubmit() {
   padding: 32px;
   text-align: center;
   color: var(--text-color-light);
+}
+.error-message {
+  margin-top: 4px;
+  padding: 8px;
+  background-color: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 4px;
+  font-size: 14px;
 }
 </style>
