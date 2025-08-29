@@ -38,6 +38,14 @@ services:
       JWT_SECRET: a-very-long-and-secure-secret-key-that-you-must-change
       NFCAPD_DIRECTORY: /data/nfcapd
       NFCAPD_SCAN_INTERVAL: 5m
+      # SMTP настройки для email уведомлений
+      SMTP_HOST: smtp.timeweb.ru
+      SMTP_PORT: 2525
+      SMTP_USERNAME: support@snapsend.me
+      SMTP_PASSWORD: tf4mmsjlm6
+      SMTP_FROM: support@snapsend.me
+      SMTP_FROM_NAME: "Ariadna Billing"
+      SMTP_ENABLED: true
     volumes:
       - ./config.yaml:/app/config.yaml
       - /home/billing/data/:/data/nfcapd
@@ -54,12 +62,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # Проверка обновлений каждые 6 часов
-      - WATCHTOWER_POLL_INTERVAL=21600
+      - WATCHTOWER_POLL_INTERVAL=60
       # Очистка старых образов после обновления
       - WATCHTOWER_CLEANUP=true
       # Уведомления через Telegram (используем те же реквизиты что и у backend)
       - WATCHTOWER_NOTIFICATIONS=telegram
-      - WATCHTOWER_NOTIFICATION_TELEGRAM_TOKEN=8300267329:AAFC-qrrWCDEk1gXdncXcv_f7GqP4LzCoVc
+      - WATCHTOWER_NOTIFICATION_TELEGRAM_TOKEN=8386187880:AAGpDnWrqe_BRnCp7A9R1icTCkinlw8UhUA
       - WATCHTOWER_NOTIFICATION_TELEGRAM_CHAT_ID=-4922706074
       # Не отправлять уведомления при запуске watchtower
       - WATCHTOWER_NOTIFICATION_SKIP_STARTUP=true

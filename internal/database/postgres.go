@@ -178,6 +178,21 @@ func Migrate(db *sqlx.DB) {
 	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_at ON issue_history(edited_at);
 	CREATE INDEX IF NOT EXISTS idx_issue_history_edited_by ON issue_history(edited_by);
 	
+	-- Таблица для комментариев к задачам (клиент-менеджер коммуникация)
+	CREATE TABLE IF NOT EXISTS issue_comments (
+		id SERIAL PRIMARY KEY,
+		issue_id INT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+		message TEXT NOT NULL,
+		author_id INT NOT NULL REFERENCES users(id),
+		author_role VARCHAR(20) NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+	);
+
+	-- Создаем индексы для таблицы issue_comments
+	CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_id ON issue_comments(issue_id);
+	CREATE INDEX IF NOT EXISTS idx_issue_comments_created_at ON issue_comments(created_at);
+	CREATE INDEX IF NOT EXISTS idx_issue_comments_author_id ON issue_comments(author_id);
+	
 	-- Таблица для хранения соответствий IP адресов и хостов
 	CREATE TABLE IF NOT EXISTS ip_hostnames (
 		id SERIAL PRIMARY KEY,

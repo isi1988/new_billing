@@ -86,8 +86,14 @@ func (es *EmailService) sendEmail(to, subject, body string) error {
 
 	auth := smtp.PlainAuth("", es.config.Username, es.config.Password, es.config.Host)
 
-	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		to, subject, body)
+	// Формируем From header с именем, если оно указано
+	fromHeader := es.config.From
+	if es.config.FromName != "" {
+		fromHeader = fmt.Sprintf("%s <%s>", es.config.FromName, es.config.From)
+	}
+
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
+		fromHeader, to, subject, body)
 
 	addr := fmt.Sprintf("%s:%d", es.config.Host, es.config.Port)
 	

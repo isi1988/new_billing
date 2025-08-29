@@ -75,6 +75,28 @@ func (h *BillingHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Проверяем уникальность имени пользователя
+	var existingUserID int
+	err := h.DB.Get(&existingUserID, "SELECT id FROM users WHERE username = $1", payload.Username)
+	if err == nil {
+		// Пользователь с таким именем уже существует
+		response := map[string]interface{}{
+			"error":      "Username already exists",
+			"message":    fmt.Sprintf("Пользователь с логином '%s' уже существует (ID: %d)", payload.Username, existingUserID),
+			"existing_id": existingUserID,
+			"error_type": "unique_constraint_violation",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	} else if err != sql.ErrNoRows {
+		// Неожиданная ошибка базы данных
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(payload.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Error hashing password", http.StatusInternalServerError)
@@ -149,6 +171,29 @@ func (h *BillingHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Проверяем уникальность имени пользователя (исключая текущего)
+	var existingUserID int
+	err := h.DB.Get(&existingUserID, "SELECT id FROM users WHERE username = $1 AND id != $2", user.Username, id)
+	if err == nil {
+		// Пользователь с таким именем уже существует
+		response := map[string]interface{}{
+			"error":      "Username already exists",
+			"message":    fmt.Sprintf("Пользователь с логином '%s' уже существует (ID: %d)", user.Username, existingUserID),
+			"existing_id": existingUserID,
+			"error_type": "unique_constraint_violation",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	} else if err != sql.ErrNoRows {
+		// Неожиданная ошибка базы данных
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	query := `UPDATE users SET username=$1, role=$2 WHERE id=$3`
 	res, err := h.DB.Exec(query, user.Username, user.Role, id)
 	if err != nil || mustRowsAffected(res) == 0 {
@@ -238,8 +283,8 @@ func (h *BillingHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Отправляем email с данными для входа, если указан email
-	if client.Email != nil && *client.Email != "" && h.EmailService != nil {
-		go h.EmailService.SendNewUserEmail(username, password, *client.Email)
+	if client.Email != "" && h.EmailService != nil {
+		go h.EmailService.SendNewUserEmail(username, password, client.Email)
 	}
 	
 	// Отправляем результат с логином и паролем для уведомления
@@ -352,6 +397,42 @@ func (h *BillingHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 // @Security     BearerAuth
 func (h *BillingHandler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
+
+	// Проверяем связанные сущности
+	var relatedEntities []string
+
+	// Проверяем наличие договоров
+	var contractCount int
+	err := h.DB.Get(&contractCount, "SELECT COUNT(*) FROM contracts WHERE client_id = $1", id)
+	if err == nil && contractCount > 0 {
+		relatedEntities = append(relatedEntities, fmt.Sprintf("договоров: %d", contractCount))
+	}
+
+	// Проверяем наличие связанного пользователя
+	var userCount int
+	if clientIDInt, parseErr := strconv.Atoi(id); parseErr == nil {
+		clientIDStr := fmt.Sprintf("%06d", clientIDInt) // Форматируем как 6-значный ID
+		err = h.DB.Get(&userCount, "SELECT COUNT(*) FROM users WHERE username = $1", clientIDStr)
+	}
+	if err == nil && userCount > 0 {
+		relatedEntities = append(relatedEntities, fmt.Sprintf("пользователей: %d", userCount))
+	}
+
+	// Если есть связанные сущности, возвращаем ошибку
+	if len(relatedEntities) > 0 {
+		response := map[string]interface{}{
+			"error":         "Cannot delete client with related entities",
+			"message":       fmt.Sprintf("Нельзя удалить клиента. Связанные сущности: %s", strings.Join(relatedEntities, ", ")),
+			"related_entities": relatedEntities,
+			"error_type":    "cascade_delete_blocked",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	res, err := h.DB.Exec("DELETE FROM clients WHERE id=$1", id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Client not found", http.StatusNotFound)
@@ -465,6 +546,32 @@ func (h *BillingHandler) UpdateEquipment(w http.ResponseWriter, r *http.Request)
 // @Security     BearerAuth
 func (h *BillingHandler) DeleteEquipment(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
+
+	// Проверяем связанные сущности
+	var relatedEntities []string
+
+	// Проверяем наличие подключений, использующих это оборудование
+	var connectionCount int
+	err := h.DB.Get(&connectionCount, "SELECT COUNT(*) FROM connections WHERE equipment_id = $1", id)
+	if err == nil && connectionCount > 0 {
+		relatedEntities = append(relatedEntities, fmt.Sprintf("подключений: %d", connectionCount))
+	}
+
+	// Если есть связанные сущности, возвращаем ошибку
+	if len(relatedEntities) > 0 {
+		response := map[string]interface{}{
+			"error":         "Cannot delete equipment with related entities",
+			"message":       fmt.Sprintf("Нельзя удалить оборудование. Связанные сущности: %s", strings.Join(relatedEntities, ", ")),
+			"related_entities": relatedEntities,
+			"error_type":    "cascade_delete_blocked",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	res, err := h.DB.Exec("DELETE FROM equipment WHERE id=$1", id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Equipment not found", http.StatusNotFound)
@@ -581,6 +688,32 @@ func (h *BillingHandler) UpdateTariff(w http.ResponseWriter, r *http.Request) {
 // @Security     BearerAuth
 func (h *BillingHandler) DeleteTariff(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
+
+	// Проверяем связанные сущности
+	var relatedEntities []string
+
+	// Проверяем наличие подключений, использующих этот тариф
+	var connectionCount int
+	err := h.DB.Get(&connectionCount, "SELECT COUNT(*) FROM connections WHERE tariff_id = $1", id)
+	if err == nil && connectionCount > 0 {
+		relatedEntities = append(relatedEntities, fmt.Sprintf("подключений: %d", connectionCount))
+	}
+
+	// Если есть связанные сущности, возвращаем ошибку
+	if len(relatedEntities) > 0 {
+		response := map[string]interface{}{
+			"error":         "Cannot delete tariff with related entities",
+			"message":       fmt.Sprintf("Нельзя удалить тариф. Связанные сущности: %s", strings.Join(relatedEntities, ", ")),
+			"related_entities": relatedEntities,
+			"error_type":    "cascade_delete_blocked",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	res, err := h.DB.Exec("DELETE FROM tariffs WHERE id=$1", id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Tariff not found", http.StatusNotFound)
@@ -619,6 +752,28 @@ func (h *BillingHandler) CreateContract(w http.ResponseWriter, r *http.Request) 
 	}
 	if !clientExists {
 		http.Error(w, "Client not found", http.StatusBadRequest)
+		return
+	}
+	
+	// Проверяем уникальность номера договора
+	var existingContractID int
+	err = h.DB.Get(&existingContractID, "SELECT id FROM contracts WHERE number = $1", contract.Number)
+	if err == nil {
+		// Договор с таким номером уже существует
+		response := map[string]interface{}{
+			"error":      "Contract number already exists",
+			"message":    fmt.Sprintf("Договор с номером '%s' уже существует (ID: %d)", contract.Number, existingContractID),
+			"existing_id": existingContractID,
+			"error_type": "unique_constraint_violation",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	} else if err != sql.ErrNoRows {
+		// Неожиданная ошибка базы данных
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	
@@ -781,6 +936,29 @@ func (h *BillingHandler) UpdateContract(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Проверяем уникальность номера договора (исключая текущий)
+	var existingContractID int
+	err := h.DB.Get(&existingContractID, "SELECT id FROM contracts WHERE number = $1 AND id != $2", contract.Number, id)
+	if err == nil {
+		// Договор с таким номером уже существует
+		response := map[string]interface{}{
+			"error":      "Contract number already exists",
+			"message":    fmt.Sprintf("Договор с номером '%s' уже существует (ID: %d)", contract.Number, existingContractID),
+			"existing_id": existingContractID,
+			"error_type": "unique_constraint_violation",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	} else if err != sql.ErrNoRows {
+		// Неожиданная ошибка базы данных
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	query := `UPDATE contracts SET client_id=$1, "number"=$2, sign_date=$3 WHERE id=$4`
 	res, err := h.DB.Exec(query, contract.ClientID, contract.Number, contract.SignDate, id)
 	if err != nil || mustRowsAffected(res) == 0 {
@@ -800,6 +978,32 @@ func (h *BillingHandler) UpdateContract(w http.ResponseWriter, r *http.Request) 
 // @Security     BearerAuth
 func (h *BillingHandler) DeleteContract(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
+
+	// Проверяем связанные сущности
+	var relatedEntities []string
+
+	// Проверяем наличие подключений
+	var connectionCount int
+	err := h.DB.Get(&connectionCount, "SELECT COUNT(*) FROM connections WHERE contract_id = $1", id)
+	if err == nil && connectionCount > 0 {
+		relatedEntities = append(relatedEntities, fmt.Sprintf("подключений: %d", connectionCount))
+	}
+
+	// Если есть связанные сущности, возвращаем ошибку
+	if len(relatedEntities) > 0 {
+		response := map[string]interface{}{
+			"error":         "Cannot delete contract with related entities",
+			"message":       fmt.Sprintf("Нельзя удалить договор. Связанные сущности: %s", strings.Join(relatedEntities, ", ")),
+			"related_entities": relatedEntities,
+			"error_type":    "cascade_delete_blocked",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	res, err := h.DB.Exec("DELETE FROM contracts WHERE id=$1", id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Contract not found", http.StatusNotFound)
@@ -828,15 +1032,54 @@ func (h *BillingHandler) CreateConnection(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Проверяем IP конфликты, если IP адрес указан, но не блокируем создание
+	var conflicts []map[string]interface{}
+	if conn.IPAddress != "" {
+		var existingConnections []models.Connection
+		conflictQuery := `
+			SELECT id, ip_address, contract_id, address 
+			FROM connections 
+			WHERE ip_address = $1 AND ip_address != ''
+		`
+		err := h.DB.Select(&existingConnections, conflictQuery, conn.IPAddress)
+		if err != nil {
+			http.Error(w, "Failed to check IP conflicts: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if len(existingConnections) > 0 {
+			conflicts = make([]map[string]interface{}, len(existingConnections))
+			for i, existing := range existingConnections {
+				conflicts[i] = map[string]interface{}{
+					"id":         existing.ID,
+					"ip_address": existing.IPAddress,
+					"contract_id": existing.ContractID,
+					"address":    existing.Address,
+				}
+			}
+		}
+	}
+
 	query := `INSERT INTO connections (equipment_id, contract_id, address, connection_type, tariff_id, ip_address, mask, is_blocked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 	err := h.DB.QueryRow(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask, conn.IsBlocked).Scan(&conn.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Формируем ответ с информацией о конфликтах, если они есть
+	response := map[string]interface{}{
+		"connection": conn,
+	}
+	if len(conflicts) > 0 {
+		response["ip_conflicts"] = conflicts
+		response["warning"] = fmt.Sprintf("IP адрес %s уже используется другими подключениями", conn.IPAddress)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(conn)
+	json.NewEncoder(w).Encode(response)
 }
 
 // @Summary      Получить список подключений
@@ -924,13 +1167,54 @@ func (h *BillingHandler) UpdateConnection(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Проверяем IP конфликты при обновлении, если IP адрес указан, но не блокируем обновление
+	var conflicts []map[string]interface{}
+	if conn.IPAddress != "" {
+		var existingConnections []models.Connection
+		conflictQuery := `
+			SELECT id, ip_address, contract_id, address 
+			FROM connections 
+			WHERE ip_address = $1 AND ip_address != '' AND id != $2
+		`
+		err := h.DB.Select(&existingConnections, conflictQuery, conn.IPAddress, id)
+		if err != nil {
+			http.Error(w, "Failed to check IP conflicts: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if len(existingConnections) > 0 {
+			conflicts = make([]map[string]interface{}, len(existingConnections))
+			for i, existing := range existingConnections {
+				conflicts[i] = map[string]interface{}{
+					"id":         existing.ID,
+					"ip_address": existing.IPAddress,
+					"contract_id": existing.ContractID,
+					"address":    existing.Address,
+				}
+			}
+		}
+	}
+
 	query := `UPDATE connections SET equipment_id=$1, contract_id=$2, address=$3, connection_type=$4, tariff_id=$5, ip_address=$6, mask=$7, is_blocked=$8 WHERE id=$9`
 	res, err := h.DB.Exec(query, conn.EquipmentID, conn.ContractID, conn.Address, conn.ConnectionType, conn.TariffID, conn.IPAddress, conn.Mask, conn.IsBlocked, id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Connection not found or not updated", http.StatusNotFound)
 		return
 	}
+
+	// Формируем ответ с информацией о конфликтах, если они есть
+	response := map[string]interface{}{
+		"success": true,
+	}
+	if len(conflicts) > 0 {
+		response["ip_conflicts"] = conflicts
+		response["warning"] = fmt.Sprintf("IP адрес %s уже используется другими подключениями", conn.IPAddress)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 // @Summary      Удалить подключение
@@ -2383,6 +2667,136 @@ func (h *BillingHandler) GetIssueHistory(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
+}
+
+// @Summary      Добавить комментарий к задаче
+// @Description  Добавляет новый комментарий к задаче для клиент-менеджер коммуникации
+// @Tags         Issues
+// @Accept       json
+// @Produce      json
+// @Param        id   path      int                     true  "ID задачи"
+// @Param        comment body   models.IssueComment     true  "Данные комментария"
+// @Success      201  {object}  models.IssueComment
+// @Failure      400  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /issues/{id}/comments [post]
+func (h *BillingHandler) AddIssueComment(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	
+	// Проверяем, существует ли задача
+	var issue models.Issue
+	err := h.DB.Get(&issue, "SELECT * FROM issues WHERE id=$1", id)
+	if err != nil {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	var comment models.IssueComment
+	if err := json.NewDecoder(r.Body).Decode(&comment); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Устанавливаем issue_id из URL
+	comment.IssueID = issue.ID
+
+	// Если author_id не указан, используем значение по умолчанию
+	if comment.AuthorID == 0 {
+		comment.AuthorID = 1 // TODO: Get from auth context
+	}
+	
+	// Если author_role не указан, определяем из пользователя
+	if comment.AuthorRole == "" {
+		var user models.User
+		err := h.DB.Get(&user, "SELECT * FROM users WHERE id=$1", comment.AuthorID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		comment.AuthorRole = string(user.Role)
+	}
+
+	// Вставляем комментарий в базу данных
+	query := `
+		INSERT INTO issue_comments (issue_id, message, author_id, author_role, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		RETURNING id, created_at
+	`
+	err = h.DB.QueryRow(query, comment.IssueID, comment.Message, comment.AuthorID, comment.AuthorRole).
+		Scan(&comment.ID, &comment.CreatedAt)
+	if err != nil {
+		http.Error(w, "Failed to create comment: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Отправляем email уведомление
+	go func() {
+		// Получаем информацию о создателе задачи и связанном клиенте для отправки уведомления
+		var userEmail string
+		query := `
+			SELECT c.email 
+			FROM users u 
+			LEFT JOIN clients c ON u.username = LPAD(c.id::TEXT, 6, '0')
+			WHERE u.id = $1 AND c.email != ''
+		`
+		if err := h.DB.Get(&userEmail, query, issue.CreatedBy); err == nil && userEmail != "" {
+			// Если комментарий добавил не создатель задачи - отправляем уведомление создателю
+			if comment.AuthorID != issue.CreatedBy {
+				h.EmailService.SendSupportTicketEmail(
+					userEmail, 
+					issue.Title, 
+					comment.Message, 
+					true, // isReply = true
+				)
+			}
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(comment)
+}
+
+// @Summary      Получить комментарии к задаче
+// @Description  Возвращает все комментарии к задаче
+// @Tags         Issues
+// @Produce      json
+// @Param        id   path      int     true  "ID задачи"
+// @Success      200  {array}   models.IssueComment
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /issues/{id}/comments [get]
+func (h *BillingHandler) GetIssueComments(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	// Проверяем, существует ли задача
+	var issueExists bool
+	err := h.DB.Get(&issueExists, "SELECT EXISTS(SELECT 1 FROM issues WHERE id=$1)", id)
+	if err != nil || !issueExists {
+		http.Error(w, "Issue not found", http.StatusNotFound)
+		return
+	}
+
+	// Получаем комментарии с информацией об авторах
+	query := `
+		SELECT 
+			ic.id, ic.issue_id, ic.message, ic.author_id, 
+			ic.author_role, ic.created_at
+		FROM issue_comments ic
+		WHERE ic.issue_id = $1
+		ORDER BY ic.created_at ASC
+	`
+
+	var comments []models.IssueComment
+	err = h.DB.Select(&comments, query, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch comments: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(comments)
 }
 
 // @Summary      Получить системную информацию

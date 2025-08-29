@@ -391,17 +391,8 @@ function clearFilters() {
 .block-btn {
   background: linear-gradient(135deg, var(--error-500) 0%, var(--error-600) 100%);
   color: white;
-  border: none;
-  cursor: pointer;
   transition: all 0.2s ease-in-out;
   box-shadow: 0 2px 4px rgba(234, 67, 53, 0.2);
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .block-btn:hover {
@@ -413,17 +404,8 @@ function clearFilters() {
 .unblock-btn {
   background: linear-gradient(135deg, var(--success-500) 0%, var(--success-600) 100%);
   color: white;
-  border: none;
-  cursor: pointer;
   transition: all 0.2s ease-in-out;
   box-shadow: 0 2px 4px rgba(52, 168, 83, 0.2);
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .unblock-btn:hover {

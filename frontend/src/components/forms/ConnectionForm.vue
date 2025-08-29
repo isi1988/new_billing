@@ -15,6 +15,9 @@ const relatedData = ref({
   tariffs: [],
 });
 const isLoadingRelated = ref(false);
+const ipConflicts = ref([]);
+const isCheckingIP = ref(false);
+const validationErrors = ref([]);
 
 // --- Логика ---
 
@@ -37,7 +40,7 @@ async function fetchRelatedData() {
     relatedData.value.tariffs = tariffsRes.data || [];
   } catch (error) {
     console.error("Не удалось загрузить связанные данные:", error);
-    alert("Ошибка загрузки списков для формы. Проверьте консоль.");
+    validationErrors.value.push("Ошибка загрузки списков для формы. Проверьте консоль.");
   } finally {
     isLoadingRelated.value = false;
   }
@@ -46,18 +49,69 @@ async function fetchRelatedData() {
 // Загружаем данные при монтировании компонента
 onMounted(fetchRelatedData);
 
+// Функция для проверки конфликтов IP адресов
+async function checkIPConflicts() {
+  const ipAddress = form.value.ip_address?.trim();
+  
+  // Очищаем конфликты если IP пустой
+  if (!ipAddress) {
+    ipConflicts.value = [];
+    return;
+  }
+
+  // Простая валидация IP формата
+  const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipRegex.test(ipAddress)) {
+    ipConflicts.value = [];
+    return;
+  }
+
+  isCheckingIP.value = true;
+  try {
+    // Получаем все подключения и проверяем IP конфликты
+    const response = await apiClient.get('/connections');
+    const allConnections = response.data || [];
+    
+    // Фильтруем подключения с таким же IP (исключая текущее при редактировании)
+    const conflicts = allConnections.filter(conn => {
+      return conn.ip_address === ipAddress && 
+             conn.id !== form.value.id; // исключаем текущее подключение при редактировании
+    });
+    
+    ipConflicts.value = conflicts;
+  } catch (error) {
+    console.error('Failed to check IP conflicts:', error);
+    // При ошибке не показываем конфликты
+    ipConflicts.value = [];
+  } finally {
+    isCheckingIP.value = false;
+  }
+}
+
+// Отслеживаем изменения IP адреса с задержкой
+let ipCheckTimeout;
+watch(() => form.value.ip_address, () => {
+  clearTimeout(ipCheckTimeout);
+  ipCheckTimeout = setTimeout(checkIPConflicts, 500); // Задержка 500ms
+});
+
 function handleSubmit() {
+  // Очищаем предыдущие ошибки
+  validationErrors.value = [];
+
   // Валидация: проверяем, что все обязательные поля заполнены
   if (!form.value.equipment_id) {
-    alert('Пожалуйста, выберите оборудование');
-    return;
+    validationErrors.value.push('Пожалуйста, выберите оборудование');
   }
   if (!form.value.contract_id) {
-    alert('Пожалуйста, выберите договор');
-    return;
+    validationErrors.value.push('Пожалуйста, выберите договор');
   }
   if (!form.value.tariff_id) {
-    alert('Пожалуйста, выберите тариф');
+    validationErrors.value.push('Пожалуйста, выберите тариф');
+  }
+
+  // Если есть ошибки валидации, не продолжаем
+  if (validationErrors.value.length > 0) {
     return;
   }
 
@@ -72,15 +126,17 @@ function handleSubmit() {
   
   // Проверяем, что ID действительно числа и больше 0
   if (isNaN(dataToSave.equipment_id) || dataToSave.equipment_id <= 0) {
-    alert('Некорректный ID оборудования');
-    return;
+    validationErrors.value.push('Некорректный ID оборудования');
   }
   if (isNaN(dataToSave.contract_id) || dataToSave.contract_id <= 0) {
-    alert('Некорректный ID договора');
-    return;
+    validationErrors.value.push('Некорректный ID договора');
   }
   if (isNaN(dataToSave.tariff_id) || dataToSave.tariff_id <= 0) {
-    alert('Некорректный ID тарифа');
+    validationErrors.value.push('Некорректный ID тарифа');
+  }
+
+  // Если есть ошибки после преобразования, не продолжаем
+  if (validationErrors.value.length > 0) {
     return;
   }
 
@@ -90,6 +146,17 @@ function handleSubmit() {
 
 <template>
   <form @submit.prevent="handleSubmit">
+    <!-- Показываем ошибки валидации -->
+    <div v-if="validationErrors.length > 0" class="validation-errors">
+      <div class="error-header">
+        <span class="material-icons icon-sm">error</span>
+        Исправьте ошибки:
+      </div>
+      <ul>
+        <li v-for="error in validationErrors" :key="error">{{ error }}</li>
+      </ul>
+    </div>
+
     <div v-if="isLoadingRelated" class="loading-related">Загрузка списков...</div>
     <div v-else class="form-grid">
       <div class="form-group span-2">
@@ -140,6 +207,24 @@ function handleSubmit() {
       <div class="form-group">
         <label for="ip-address">IP-адрес</label>
         <input id="ip-address" type="text" v-model="form.ip_address" required placeholder="xxx.xxx.xxx.xxx" />
+        
+        <!-- IP conflict warning -->
+        <div v-if="isCheckingIP" class="ip-status checking">
+          ⏳ Проверка конфликтов IP...
+        </div>
+        <div v-else-if="ipConflicts.length > 0" class="ip-status conflict">
+          <div class="conflict-header">
+            ⚠️ IP адрес {{ form.ip_address }} уже используется:
+          </div>
+          <div class="conflict-list">
+            <div v-for="conflict in ipConflicts" :key="conflict.id" class="conflict-item">
+              • Подключение ID {{ conflict.id }} (Договор {{ conflict.contract_id }}, {{ conflict.address }})
+            </div>
+          </div>
+        </div>
+        <div v-else-if="form.ip_address && form.ip_address.match(/^(\d{1,3}\.){3}\d{1,3}$/)" class="ip-status success">
+          ✅ IP адрес свободен
+        </div>
       </div>
 
       <div class="form-group">
@@ -183,5 +268,46 @@ function handleSubmit() {
   border: 1px solid #fecaca;
   border-radius: 4px;
   font-size: 14px;
+}
+
+/* IP Status styles */
+.ip-status {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.ip-status.checking {
+  background-color: #fef3c7;
+  color: #d97706;
+  border: 1px solid #fde68a;
+}
+
+.ip-status.success {
+  background-color: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.ip-status.conflict {
+  background-color: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.conflict-header {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.conflict-list {
+  margin-left: 8px;
+}
+
+.conflict-item {
+  margin-bottom: 4px;
+  font-size: 13px;
 }
 </style>

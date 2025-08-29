@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"strconv"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 )
@@ -49,6 +51,7 @@ type SMTPConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	From     string `yaml:"from"`
+	FromName string `yaml:"from_name"`
 	Enabled  bool   `yaml:"enabled"`
 }
 
@@ -62,5 +65,33 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	
+	// Переопределяем SMTP настройки из переменных окружения, если они заданы
+	if smtpHost := os.Getenv("SMTP_HOST"); smtpHost != "" {
+		config.SMTP.Host = smtpHost
+	}
+	if smtpPortStr := os.Getenv("SMTP_PORT"); smtpPortStr != "" {
+		if smtpPort, parseErr := strconv.Atoi(smtpPortStr); parseErr == nil {
+			config.SMTP.Port = smtpPort
+		}
+	}
+	if smtpUsername := os.Getenv("SMTP_USERNAME"); smtpUsername != "" {
+		config.SMTP.Username = smtpUsername
+	}
+	if smtpPassword := os.Getenv("SMTP_PASSWORD"); smtpPassword != "" {
+		config.SMTP.Password = smtpPassword
+	}
+	if smtpFrom := os.Getenv("SMTP_FROM"); smtpFrom != "" {
+		config.SMTP.From = smtpFrom
+	}
+	if smtpFromName := os.Getenv("SMTP_FROM_NAME"); smtpFromName != "" {
+		config.SMTP.FromName = smtpFromName
+	}
+	if smtpEnabledStr := os.Getenv("SMTP_ENABLED"); smtpEnabledStr != "" {
+		if smtpEnabled, parseErr := strconv.ParseBool(smtpEnabledStr); parseErr == nil {
+			config.SMTP.Enabled = smtpEnabled
+		}
+	}
+	
 	return config, nil
 }

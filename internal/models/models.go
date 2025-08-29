@@ -222,6 +222,21 @@ type IssueWithHistory struct {
 	History []IssueHistory `json:"history,omitempty"`
 }
 
+// Issue comments for client-manager communication
+type IssueComment struct {
+	ID        int       `json:"id" db:"id"`
+	IssueID   int       `json:"issue_id" db:"issue_id"`
+	Message   string    `json:"message" db:"message"`
+	AuthorID  int       `json:"author_id" db:"author_id"`
+	AuthorRole string   `json:"author_role" db:"author_role"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+type IssueWithComments struct {
+	Issue
+	Comments []IssueComment `json:"comments,omitempty"`
+}
+
 // Hostname resolution models
 type IPHostname struct {
 	ID         int       `json:"id" db:"id"`

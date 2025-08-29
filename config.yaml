@@ -16,3 +16,11 @@ telegram:
   bot_token: "8300267329:AAFC-qrrWCDEk1gXdncXcv_f7GqP4LzCoVc"
   chat_id: "-4922706074"
   enabled: true
+smtp:
+  host: "smtp.timeweb.ru"
+  port: 2525
+  username: "support@snapsend.me"
+  password: "tf4mmsjlm6"
+  from: "support@snapsend.me"
+  from_name: "Ariadna Billing"
+  enabled: true

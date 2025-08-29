@@ -148,6 +148,10 @@ func main() {
 	managerRouter.HandleFunc("/issues/{id:[0-9]+}/resolve", billingHandler.ResolveIssue).Methods("POST")
 	managerRouter.HandleFunc("/issues/{id:[0-9]+}/unresolve", billingHandler.UnresolveIssue).Methods("POST")
 	managerRouter.HandleFunc("/issues/{id:[0-9]+}/history", billingHandler.GetIssueHistory).Methods("GET")
+	
+	// Комментарии к задачам
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}/comments", billingHandler.GetIssueComments).Methods("GET")
+	managerRouter.HandleFunc("/issues/{id:[0-9]+}/comments", billingHandler.AddIssueComment).Methods("POST")
 
 	// --- Роуты только для Админов ---
 	adminRouter := apiRouter.PathPrefix("").Subrouter()

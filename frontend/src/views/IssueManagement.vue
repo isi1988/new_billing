@@ -7,6 +7,7 @@ import IssueForm from '@/components/forms/IssueForm.vue';
 import IssueHistory from '@/components/IssueHistory.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import { formatDate, formatDateOptional } from '@/utils/dateUtils';
+import apiClient from '@/api/client';
 
 const { items: issues, loading, createItem, updateItem, deleteItem } = useCrud('issues');
 
@@ -19,6 +20,13 @@ const historyIssueId = ref(null);
 const showUnresolveModal = ref(false);
 const unresolveIssueId = ref(null);
 const unresolveReason = ref('');
+
+// Comment-related state
+const expandedComments = ref(new Set());
+const issueComments = ref({});
+const loadingComments = ref(new Set());
+const newCommentText = ref({});
+const addingComment = ref(new Set());
 
 const columns = [
   { key: 'id', label: 'ID' },
@@ -163,6 +171,79 @@ async function confirmUnresolve() {
     alert('Не удалось вернуть задачу в работу: ' + error.message);
   }
 }
+
+// Comment functions
+async function toggleComments(issue) {
+  if (expandedComments.value.has(issue.id)) {
+    expandedComments.value.delete(issue.id);
+  } else {
+    expandedComments.value.add(issue.id);
+    await loadComments(issue.id);
+  }
+}
+
+async function loadComments(issueId) {
+  if (loadingComments.value.has(issueId)) return;
+  
+  loadingComments.value.add(issueId);
+  try {
+    const response = await apiClient.get(`/issues/${issueId}/comments`);
+    issueComments.value[issueId] = response.data || [];
+  } catch (error) {
+    console.error('Failed to load comments:', error);
+    issueComments.value[issueId] = [];
+  } finally {
+    loadingComments.value.delete(issueId);
+  }
+}
+
+async function addComment(issueId) {
+  const message = newCommentText.value[issueId]?.trim();
+  if (!message) return;
+  
+  addingComment.value.add(issueId);
+  try {
+    const response = await apiClient.post(`/issues/${issueId}/comments`, {
+      message: message
+    });
+    
+    // Add the new comment to the list
+    if (!issueComments.value[issueId]) {
+      issueComments.value[issueId] = [];
+    }
+    issueComments.value[issueId].push(response.data);
+    
+    // Clear the input
+    newCommentText.value[issueId] = '';
+  } catch (error) {
+    console.error('Failed to add comment:', error);
+    alert('Не удалось добавить комментарий');
+  } finally {
+    addingComment.value.delete(issueId);
+  }
+}
+
+function formatCommentDate(dateString) {
+  return new Date(dateString).toLocaleString('ru-RU');
+}
+
+function getAuthorBadgeClass(role) {
+  switch (role) {
+    case 'admin': return 'author-admin';
+    case 'manager': return 'author-manager';
+    case 'client': return 'author-client';
+    default: return 'author-default';
+  }
+}
+
+function getAuthorLabel(role) {
+  switch (role) {
+    case 'admin': return 'Администратор';
+    case 'manager': return 'Менеджер';
+    case 'client': return 'Клиент';
+    default: return 'Пользователь';
+  }
+}
 </script>
 
 <template>
@@ -232,6 +313,13 @@ async function confirmUnresolve() {
                 <span class="material-icons icon-sm">history</span>
               </button>
               <button 
+                class="btn btn-icon btn-sm btn-primary" 
+                @click="toggleComments(issue)"
+                title="Комментарии"
+              >
+                <span class="material-icons icon-sm">comment</span>
+              </button>
+              <button 
                 v-if="issue.status === 'new'"
                 class="btn btn-icon btn-sm btn-secondary" 
                 @click="openEditModal(issue)"
@@ -246,6 +334,61 @@ async function confirmUnresolve() {
               >
                 <span class="material-icons icon-sm">delete</span>
               </button>
+            </div>
+          </div>
+          
+          <!-- Comments section -->
+          <div v-if="expandedComments.has(issue.id)" class="comments-section">
+            <div v-if="loadingComments.has(issue.id)" class="loading-comments">
+              <span class="material-icons icon-sm">hourglass_empty</span>
+              Загрузка комментариев...
+            </div>
+            <div v-else>
+              <div class="comments-header">
+                <h4>Комментарии ({{ issueComments[issue.id]?.length || 0 }})</h4>
+              </div>
+              
+              <div class="comments-list">
+                <div v-if="!issueComments[issue.id]?.length" class="no-comments">
+                  Комментариев пока нет
+                </div>
+                <div 
+                  v-for="comment in issueComments[issue.id]" 
+                  :key="comment.id" 
+                  class="comment"
+                >
+                  <div class="comment-header">
+                    <span :class="['author-badge', getAuthorBadgeClass(comment.author_role)]">
+                      {{ getAuthorLabel(comment.author_role) }}
+                    </span>
+                    <span class="comment-date">{{ formatCommentDate(comment.created_at) }}</span>
+                  </div>
+                  <div class="comment-message">{{ comment.message }}</div>
+                </div>
+              </div>
+              
+              <div class="add-comment">
+                <div class="comment-input">
+                  <textarea 
+                    v-model="newCommentText[issue.id]" 
+                    placeholder="Добавить комментарий..."
+                    rows="3"
+                    class="form-control"
+                  ></textarea>
+                </div>
+                <div class="comment-actions">
+                  <button 
+                    type="button"
+                    class="btn btn-sm btn-primary"
+                    @click="addComment(issue.id)"
+                    :disabled="!newCommentText[issue.id]?.trim() || addingComment.has(issue.id)"
+                  >
+                    <span v-if="addingComment.has(issue.id)" class="material-icons icon-sm">hourglass_empty</span>
+                    <span v-else class="material-icons icon-sm">send</span>
+                    {{ addingComment.has(issue.id) ? 'Добавление...' : 'Отправить' }}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -500,5 +643,133 @@ async function confirmUnresolve() {
 .unresolve-form textarea {
   min-height: 5rem;
   resize: vertical;
+}
+
+/* Comment styles */
+.comments-section {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--gray-25);
+  border-top: 1px solid var(--gray-200);
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+.loading-comments {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--gray-600);
+  padding: 1rem;
+  justify-content: center;
+}
+
+.comments-header h4 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.comments-list {
+  margin-bottom: 1rem;
+}
+
+.no-comments {
+  text-align: center;
+  color: var(--gray-500);
+  padding: 1rem;
+  font-style: italic;
+}
+
+.comment {
+  background: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.author-badge {
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.author-admin {
+  background: var(--red-100);
+  color: var(--red-700);
+}
+
+.author-manager {
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+
+.author-client {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.author-default {
+  background: var(--gray-100);
+  color: var(--gray-700);
+}
+
+.comment-date {
+  font-size: 0.75rem;
+  color: var(--gray-500);
+}
+
+.comment-message {
+  color: var(--gray-800);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.add-comment {
+  border-top: 1px solid var(--gray-200);
+  padding-top: 1rem;
+}
+
+.comment-input {
+  margin-bottom: 0.75rem;
+}
+
+.comment-input textarea {
+  width: 100%;
+  border: 1px solid var(--gray-300);
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.comment-input textarea:focus {
+  outline: none;
+  border-color: var(--primary-500);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.comment-actions .btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 </style>
