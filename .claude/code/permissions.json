@@ -1,0 +1,6 @@
+{
+  "file_edit": {
+    "auto_approve": true,
+    "allowed_paths": ["./"]
+  }
+}

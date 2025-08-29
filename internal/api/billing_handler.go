@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
-	"new-billing/internal/models"
+	"new-bill
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/jmoiron/sqlx"
@@ -172,8 +175,8 @@ func (h *BillingHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := `INSERT INTO clients (client_type, email, phone, first_name, last_name, patronymic, passport_number, passport_issued_by, passport_issue_date, registration_address, birth_date, inn, kpp, full_name, short_name, ogrn, ogrn_date, legal_address, actual_address, bank_details, ceo, accountant) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`
-	err := h.DB.QueryRow(query, client.ClientType, client.Email, client.Phone, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankDetails, client.CEO, client.Accountant).Scan(&client.ID)
+	query := `INSERT INTO clients (client_type, email, phone, is_blocked, first_name, last_name, patronymic, passport_number, passport_issued_by, passport_issue_date, registration_address, birth_date, inn, kpp, full_name, short_name, ogrn, ogrn_date, legal_address, actual_address, bank_name, bank_account, bank_bik, bank_correspondent, ceo, accountant) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING id`
+	err := h.DB.QueryRow(query, client.ClientType, client.Email, client.Phone, client.IsBlocked, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankName, client.BankAccount, client.BankBIK, client.BankCorrespondent, client.CEO, client.Accountant).Scan(&client.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -238,8 +241,8 @@ func (h *BillingHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := `UPDATE clients SET client_type=$1, email=$2, phone=$3, first_name=$4, last_name=$5, patronymic=$6, passport_number=$7, passport_issued_by=$8, passport_issue_date=$9, registration_address=$10, birth_date=$11, inn=$12, kpp=$13, full_name=$14, short_name=$15, ogrn=$16, ogrn_date=$17, legal_address=$18, actual_address=$19, bank_details=$20, ceo=$21, accountant=$22 WHERE id=$23`
-	res, err := h.DB.Exec(query, client.ClientType, client.Email, client.Phone, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankDetails, client.CEO, client.Accountant, id)
+	query := `UPDATE clients SET client_type=$1, email=$2, phone=$3, is_blocked=$4, first_name=$5, last_name=$6, patronymic=$7, passport_number=$8, passport_issued_by=$9, passport_issue_date=$10, registration_address=$11, birth_date=$12, inn=$13, kpp=$14, full_name=$15, short_name=$16, ogrn=$17, ogrn_date=$18, legal_address=$19, actual_address=$20, bank_name=$21, bank_account=$22, bank_bik=$23, bank_correspondent=$24, ceo=$25, accountant=$26 WHERE id=$27`
+	res, err := h.DB.Exec(query, client.ClientType, client.Email, client.Phone, client.IsBlocked, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankName, client.BankAccount, client.BankBIK, client.BankCorrespondent, client.CEO, client.Accountant, id)
 	if err != nil || mustRowsAffected(res) == 0 {
 		http.Error(w, "Client not found or not updated", http.StatusNotFound)
 		return
@@ -718,4 +721,313 @@ func (h *BillingHandler) DeleteConnection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+//================================================================================
+// BLOCKING: Методы блокировки/разблокировки
+//================================================================================
+
+// BlockClient блокирует клиента и все его договоры
+// @Summary      Заблокировать клиента
+// @Description  Блокирует клиента и автоматически блокирует все его договоры
+// @Tags         Clients
+// @Param        id   path      int  true  "ID Клиента"
+// @Success      200  {string}  string "OK"
+// @Failure      404  {object}  map[string]string
+// @Router       /clients/{id}/block [post]
+// @Security     BearerAuth
+func (h *BillingHandler) BlockClient(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+
+	// Начинаем транзакцию
+	tx, err := h.DB.Beginx()
+	if err != nil {
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Блокируем клиента
+	res, err := tx.Exec("UPDATE clients SET is_blocked=true WHERE id=$1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Client not found", http.StatusNotFound)
+		return
+	}
+
+	// Блокируем все договоры клиента
+	_, err = tx.Exec("UPDATE contracts SET is_blocked=true WHERE client_id=$1", id)
+	if err != nil {
+		http.Error(w, "Failed to block contracts", http.StatusInternalServerError)
+		return
+	}
+
+	// Коммитим транзакцию
+	if err = tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// UnblockClient разблокирует клиента (договоры остаются заблокированными)
+// @Summary      Разблокировать клиента
+// @Description  Разблокирует клиента (договоры нужно разблокировать отдельно)
+// @Tags         Clients
+// @Param        id   path      int  true  "ID Клиента"
+// @Success      200  {string}  string "OK"
+// @Failure      404  {object}  map[string]string
+// @Router       /clients/{id}/unblock [post]
+// @Security     BearerAuth
+func (h *BillingHandler) UnblockClient(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	res, err := h.DB.Exec("UPDATE clients SET is_blocked=false WHERE id=$1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Client not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// BlockContract блокирует договор
+// @Summary      Заблокировать договор
+// @Description  Блокирует конкретный договор
+// @Tags         Contracts
+// @Param        id   path      int  true  "ID Договора"
+// @Success      200  {string}  string "OK"
+// @Failure      404  {object}  map[string]string
+// @Router       /contracts/{id}/block [post]
+// @Security     BearerAuth
+func (h *BillingHandler) BlockContract(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	res, err := h.DB.Exec("UPDATE contracts SET is_blocked=true WHERE id=$1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Contract not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// UnblockContract разблокирует договор
+// @Summary      Разблокировать договор
+// @Description  Разблокирует конкретный договор
+// @Tags         Contracts
+// @Param        id   path      int  true  "ID Договора"
+// @Success      200  {string}  string "OK"
+// @Failure      404  {object}  map[string]string
+// @Router       /contracts/{id}/unblock [post]
+// @Security     BearerAuth
+func (h *BillingHandler) UnblockContract(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	res, err := h.DB.Exec("UPDATE contracts SET is_blocked=false WHERE id=$1", id)
+	if err != nil || mustRowsAffected(res) == 0 {
+		http.Error(w, "Contract not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+//================================================================================
+// TRAFFIC DASHBOARD
+//================================================================================
+
+// @Summary      Получить данные трафика с фильтрацией
+// @Description  Возвращает данные трафика с возможностью фильтрации по клиенту, IP, временному интервалу
+// @Tags         Traffic
+// @Produce      json
+// @Param        client_id query int false "ID клиента"
+// @Param        ip_address query string false "IP адрес"
+// @Param        from query string false "Дата начала (YYYY-MM-DD HH:MM:SS)"
+// @Param        to query string false "Дата окончания (YYYY-MM-DD HH:MM:SS)"
+// @Param        limit query int false "Лимит записей (по умолчанию 100)"
+// @Param        offset query int false "Смещение записей (по умолчанию 0)"
+// @Success      200  {array}   models.TrafficResponse
+// @Failure      400  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Router       /traffic [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetTrafficData(w http.ResponseWriter, r *http.Request) {
+	queryParams := r.URL.Query()
+
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 1
+
+	baseQuery := `
+		SELECT 
+			t.id,
+			t.connection_id,
+			t.client_id,
+			COALESCE(cl.first_name || ' ' || cl.last_name, cl.full_name, cl.short_name, cl.email) as client_name,
+			cl.email as client_email,
+			c.ip_address,
+			t.timestamp,
+			t.bytes_in,
+			t.bytes_out,
+			t.packets_in,
+			t.packets_out,
+			(t.bytes_in + t.bytes_out) as total_traffic
+		FROM traffic t
+		LEFT JOIN clients cl ON t.client_id = cl.id
+		LEFT JOIN connections c ON t.connection_id = c.id
+	`
+
+	if clientID := queryParams.Get("client_id"); clientID != "" {
+		if id, err := strconv.Atoi(clientID); err == nil {
+			whereClauses = append(whereClauses, "t.client_id = $"+strconv.Itoa(argIndex))
+			args = append(args, id)
+			argIndex++
+		}
+	}
+
+	if ipAddress := queryParams.Get("ip_address"); ipAddress != "" {
+		whereClauses = append(whereClauses, "c.ip_address ILIKE $"+strconv.Itoa(argIndex))
+		args = append(args, "%"+ipAddress+"%")
+		argIndex++
+	}
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02 15:04:05", fromDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp >= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		} else if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp >= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02 15:04:05", toDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		} else if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex)+" + INTERVAL '1 day'")
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		baseQuery += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	baseQuery += " ORDER BY t.timestamp DESC"
+
+	limit := 100
+	if limitStr := queryParams.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 1000 {
+			limit = l
+		}
+	}
+
+	offset := 0
+	if offsetStr := queryParams.Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	baseQuery += " LIMIT $" + strconv.Itoa(argIndex) + " OFFSET $" + strconv.Itoa(argIndex+1)
+	args = append(args, limit, offset)
+
+	var traffic []models.TrafficResponse
+	err := h.DB.Select(&traffic, baseQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to fetch traffic data: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(traffic)
+}
+
+// @Summary      Получить статистику трафика
+// @Description  Возвращает агрегированную статистику по трафику
+// @Tags         Traffic
+// @Produce      json
+// @Param        client_id query int false "ID клиента"
+// @Param        from query string false "Дата начала (YYYY-MM-DD)"
+// @Param        to query string false "Дата окончания (YYYY-MM-DD)"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      500  {object}  map[string]string
+// @Router       /traffic/stats [get]
+// @Security     BearerAuth
+func (h *BillingHandler) GetTrafficStats(w http.ResponseWriter, r *http.Request) {
+	queryParams := r.URL.Query()
+
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 1
+
+	baseQuery := `
+		SELECT 
+			COUNT(*) as total_records,
+			SUM(bytes_in) as total_bytes_in,
+			SUM(bytes_out) as total_bytes_out,
+			SUM(bytes_in + bytes_out) as total_traffic,
+			AVG(bytes_in + bytes_out) as avg_traffic,
+			MAX(bytes_in + bytes_out) as max_traffic,
+			MIN(bytes_in + bytes_out) as min_traffic
+		FROM traffic t
+	`
+
+	if clientID := queryParams.Get("client_id"); clientID != "" {
+		if id, err := strconv.Atoi(clientID); err == nil {
+			whereClauses = append(whereClauses, "t.client_id = $"+strconv.Itoa(argIndex))
+			args = append(args, id)
+			argIndex++
+		}
+	}
+
+	if fromDate := queryParams.Get("from"); fromDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", fromDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp >= $"+strconv.Itoa(argIndex))
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if toDate := queryParams.Get("to"); toDate != "" {
+		if parsedDate, err := time.Parse("2006-01-02", toDate); err == nil {
+			whereClauses = append(whereClauses, "t.timestamp <= $"+strconv.Itoa(argIndex)+" + INTERVAL '1 day'")
+			args = append(args, parsedDate)
+			argIndex++
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		baseQuery += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	var stats struct {
+		TotalRecords  int     `db:"total_records"`
+		TotalBytesIn  int64   `db:"total_bytes_in"`
+		TotalBytesOut int64   `db:"total_bytes_out"`
+		TotalTraffic  int64   `db:"total_traffic"`
+		AvgTraffic    float64 `db:"avg_traffic"`
+		MaxTraffic    int64   `db:"max_traffic"`
+		MinTraffic    int64   `db:"min_traffic"`
+	}
+
+	err := h.DB.Get(&stats, baseQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to fetch traffic stats: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"total_records":   stats.TotalRecords,
+		"total_bytes_in":  stats.TotalBytesIn,
+		"total_bytes_out": stats.TotalBytesOut,
+		"total_traffic":   stats.TotalTraffic,
+		"avg_traffic":     stats.AvgTraffic,
+		"max_traffic":     stats.MaxTraffic,
+		"min_traffic":     stats.MinTraffic,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

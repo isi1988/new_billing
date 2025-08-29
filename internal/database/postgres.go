@@ -61,6 +61,7 @@ func Migrate(db *sqlx.DB) {
 		client_type VARCHAR(20) NOT NULL,
 		email VARCHAR(100),
 		phone VARCHAR(20),
+		is_blocked BOOLEAN DEFAULT FALSE,
 		-- Поля для физ. лиц
 		first_name VARCHAR(100),
 		last_name VARCHAR(100),
@@ -79,7 +80,10 @@ func Migrate(db *sqlx.DB) {
 		ogrn_date DATE,
 		legal_address TEXT,
 		actual_address TEXT,
-		bank_details TEXT,
+		bank_name VARCHAR(255),
+		bank_account VARCHAR(30),
+		bank_bik VARCHAR(9),
+		bank_correspondent VARCHAR(30),
 		ceo VARCHAR(255),
 		accountant VARCHAR(255)
 	);
@@ -107,7 +111,8 @@ func Migrate(db *sqlx.DB) {
 		id SERIAL PRIMARY KEY,
 		client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
 		"number" VARCHAR(50) UNIQUE NOT NULL,
-		sign_date DATE NOT NULL
+		sign_date DATE NOT NULL,
+		is_blocked BOOLEAN DEFAULT FALSE
 	);
 
 	CREATE TABLE IF NOT EXISTS connections (

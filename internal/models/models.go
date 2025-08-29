@@ -31,6 +31,7 @@ type Client struct {
 	ClientType          ClientType `json:"client_type" db:"client_type"`
 	Email               string     `json:"email" db:"email"`
 	Phone               string     `json:"phone" db:"phone"`
+	IsBlocked           bool       `json:"is_blocked" db:"is_blocked"`
 	FirstName           *string    `json:"first_name,omitempty" db:"first_name"`
 	LastName            *string    `json:"last_name,omitempty" db:"last_name"`
 	Patronymic          *string    `json:"patronymic,omitempty" db:"patronymic"`
@@ -47,7 +48,10 @@ type Client struct {
 	OGRNDate            *time.Time `json:"ogrn_date,omitempty" db:"ogrn_date"`
 	LegalAddress        *string    `json:"legal_address,omitempty" db:"legal_address"`
 	ActualAddress       *string    `json:"actual_address,omitempty" db:"actual_address"`
-	BankDetails         *string    `json:"bank_details,omitempty" db:"bank_details"`
+	BankName            *string    `json:"bank_name,omitempty" db:"bank_name"`
+	BankAccount         *string    `json:"bank_account,omitempty" db:"bank_account"`
+	BankBIK             *string    `json:"bank_bik,omitempty" db:"bank_bik"`
+	BankCorrespondent   *string    `json:"bank_correspondent,omitempty" db:"bank_correspondent"`
 	CEO                 *string    `json:"ceo,omitempty" db:"ceo"`
 	Accountant          *string    `json:"accountant,omitempty" db:"accountant"`
 }
@@ -78,10 +82,11 @@ type Tariff struct {
 	MaxTrafficOut    int64       `json:"max_traffic_out" db:"max_traffic_out"`
 }
 type Contract struct {
-	ID       int       `json:"id" db:"id"`
-	ClientID int       `json:"client_id" db:"client_id"`
-	Number   string    `json:"number" db:"number"`
-	SignDate time.Time `json:"sign_date" db:"sign_date"`
+	ID        int       `json:"id" db:"id"`
+	ClientID  int       `json:"client_id" db:"client_id"`
+	Number    string    `json:"number" db:"number"`
+	SignDate  time.Time `json:"sign_date" db:"sign_date"`
+	IsBlocked bool      `json:"is_blocked" db:"is_blocked"`
 }
 type Connection struct {
 	ID             int    `json:"id" db:"id"`
@@ -92,4 +97,30 @@ type Connection struct {
 	TariffID       int    `json:"tariff_id" db:"tariff_id"`
 	IPAddress      string `json:"ip_address" db:"ip_address"`
 	Mask           int    `json:"mask" db:"mask"`
+}
+
+type Traffic struct {
+	ID           int       `json:"id" db:"id"`
+	ConnectionID int       `json:"connection_id" db:"connection_id"`
+	ClientID     int       `json:"client_id" db:"client_id"`
+	Timestamp    time.Time `json:"timestamp" db:"timestamp"`
+	BytesIn      int64     `json:"bytes_in" db:"bytes_in"`
+	BytesOut     int64     `json:"bytes_out" db:"bytes_out"`
+	PacketsIn    int64     `json:"packets_in" db:"packets_in"`
+	PacketsOut   int64     `json:"packets_out" db:"packets_out"`
+}
+
+type TrafficResponse struct {
+	ID           int       `json:"id"`
+	ConnectionID int       `json:"connection_id"`
+	ClientID     int       `json:"client_id"`
+	ClientName   string    `json:"client_name"`
+	ClientEmail  string    `json:"client_email"`
+	IPAddress    string    `json:"ip_address"`
+	Timestamp    time.Time `json:"timestamp"`
+	BytesIn      int64     `json:"bytes_in"`
+	BytesOut     int64     `json:"bytes_out"`
+	PacketsIn    int64     `json:"packets_in"`
+	PacketsOut   int64     `json:"packets_out"`
+	TotalTraffic int64     `json:"total_traffic"`
 }

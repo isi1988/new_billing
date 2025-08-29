@@ -29,6 +29,10 @@ func main() {
 	db := database.Connect(cfg.Database)
 	database.Migrate(db)
 
+	// Заполняем тестовые данные при первом запуске
+	database.SeedBasicData(db)
+	database.SeedTestData(db)
+
 	flowService := service.NewFlowService(db, &cfg.Nfcapd)
 	go flowService.StartProcessing()
 
@@ -71,6 +75,8 @@ func main() {
 	managerRouter.HandleFunc("/clients/{id:[0-9]+}", billingHandler.GetClientByID).Methods("GET")
 	managerRouter.HandleFunc("/clients/{id:[0-9]+}", billingHandler.UpdateClient).Methods("PUT")
 	managerRouter.HandleFunc("/clients/{id:[0-9]+}", billingHandler.DeleteClient).Methods("DELETE")
+	managerRouter.HandleFunc("/clients/{id:[0-9]+}/block", billingHandler.BlockClient).Methods("POST")
+	managerRouter.HandleFunc("/clients/{id:[0-9]+}/unblock", billingHandler.UnblockClient).Methods("POST")
 
 	// CRUD для Оборудования
 	managerRouter.HandleFunc("/equipment", billingHandler.GetAllEquipment).Methods("GET")
@@ -85,6 +91,8 @@ func main() {
 	managerRouter.HandleFunc("/contracts/{id:[0-9]+}", billingHandler.GetContractByID).Methods("GET")
 	managerRouter.HandleFunc("/contracts/{id:[0-9]+}", billingHandler.UpdateContract).Methods("PUT")
 	managerRouter.HandleFunc("/contracts/{id:[0-9]+}", billingHandler.DeleteContract).Methods("DELETE")
+	managerRouter.HandleFunc("/contracts/{id:[0-9]+}/block", billingHandler.BlockContract).Methods("POST")
+	managerRouter.HandleFunc("/contracts/{id:[0-9]+}/unblock", billingHandler.UnblockContract).Methods("POST")
 
 	// CRUD для Подключений
 	managerRouter.HandleFunc("/connections", billingHandler.GetConnections).Methods("GET")
@@ -92,6 +100,10 @@ func main() {
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.GetConnectionByID).Methods("GET")
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.UpdateConnection).Methods("PUT")
 	managerRouter.HandleFunc("/connections/{id:[0-9]+}", billingHandler.DeleteConnection).Methods("DELETE")
+
+	// Дашборд трафика
+	managerRouter.HandleFunc("/traffic", billingHandler.GetTrafficData).Methods("GET")
+	managerRouter.HandleFunc("/traffic/stats", billingHandler.GetTrafficStats).Methods("GET")
 
 	// --- Роуты только для Админов ---
 	adminRouter := apiRouter.PathPrefix("").Subrouter()
