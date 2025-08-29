@@ -1,10 +1,13 @@
 package api
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
+	"new-billing/internal/email"
 	"new-billing/internal/hostname"
 	"new-billing/internal/models"
 	"new-billing/internal/telegram"
@@ -21,6 +24,7 @@ type BillingHandler struct {
 	DB              *sqlx.DB
 	TelegramService *telegram.TelegramService
 	HostnameWorker  *hostname.HostnameWorker
+	EmailService    *email.EmailService
 }
 
 // --- Хелпер для получения количества измененных строк ---
@@ -30,6 +34,19 @@ func mustRowsAffected(res sql.Result) int64 {
 		return 0
 	}
 	return count
+}
+
+// --- Генератор случайного пароля ---
+func generateRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	password := make([]byte, length)
+	
+	for i := range password {
+		num, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		password[i] = charset[num.Int64()]
+	}
+	
+	return string(password)
 }
 
 //================================================================================
@@ -180,15 +197,65 @@ func (h *BillingHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := `INSERT INTO clients (client_type, email, phone, is_blocked, first_name, last_name, patronymic, passport_number, passport_issued_by, passport_issue_date, registration_address, birth_date, inn, kpp, full_name, short_name, ogrn, ogrn_date, legal_address, actual_address, bank_name, bank_account, bank_bik, bank_correspondent, ceo, accountant) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING id`
-	err := h.DB.QueryRow(query, client.ClientType, client.Email, client.Phone, client.IsBlocked, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankName, client.BankAccount, client.BankBIK, client.BankCorrespondent, client.CEO, client.Accountant).Scan(&client.ID)
+	
+	// Начинаем транзакцию
+	tx, err := h.DB.Beginx()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer tx.Rollback()
+	
+	query := `INSERT INTO clients (client_type, email, phone, is_blocked, first_name, last_name, patronymic, passport_number, passport_issued_by, passport_issue_date, registration_address, birth_date, inn, kpp, full_name, short_name, ogrn, ogrn_date, legal_address, actual_address, bank_name, bank_account, bank_bik, bank_correspondent, ceo, accountant) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING id`
+	err = tx.QueryRow(query, client.ClientType, client.Email, client.Phone, client.IsBlocked, client.FirstName, client.LastName, client.Patronymic, client.PassportNumber, client.PassportIssuedBy, client.PassportIssueDate, client.RegistrationAddress, client.BirthDate, client.INN, client.KPP, client.FullName, client.ShortName, client.OGRN, client.OGRNDate, client.LegalAddress, client.ActualAddress, client.BankName, client.BankAccount, client.BankBIK, client.BankCorrespondent, client.CEO, client.Accountant).Scan(&client.ID)
+	if err != nil {
+		http.Error(w, "Failed to create client: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Создаем пользователя для клиента с 6-значным логином
+	username := fmt.Sprintf("%06d", client.ID) // 6-значный логин на основе ID клиента
+	password := generateRandomPassword(8)      // Генерируем 8-значный пароль
+	
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Вставляем пользователя
+	_, err = tx.Exec("INSERT INTO users (username, password_hash, role) VALUES ($1, $2, 'client')", 
+		username, string(hashedPassword))
+	if err != nil {
+		http.Error(w, "Failed to create user account: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Коммитим транзакцию
+	if err = tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Отправляем email с данными для входа, если указан email
+	if client.Email != nil && *client.Email != "" && h.EmailService != nil {
+		go h.EmailService.SendNewUserEmail(username, password, *client.Email)
+	}
+	
+	// Отправляем результат с логином и паролем для уведомления
+	result := struct {
+		models.Client
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}{
+		Client:   client,
+		Username: username,
+		Password: password,
+	}
+	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(client)
+	json.NewEncoder(w).Encode(result)
 }
 
 // @Summary      Получить список клиентов

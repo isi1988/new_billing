@@ -10,6 +10,7 @@ import (
 	"new-billing/internal/api"
 	"new-billing/internal/config"
 	"new-billing/internal/database"
+	"new-billing/internal/email"
 	"new-billing/internal/hostname"
 	"new-billing/internal/models"
 	"new-billing/internal/service"
@@ -48,10 +49,11 @@ func main() {
 
 	// --- Инициализация сервисов ---
 	telegramService := telegram.NewTelegramService(&cfg.Telegram)
+	emailService := email.NewEmailService(&cfg.SMTP)
 
 	// --- Инициализация обработчиков ---
 	authHandler := &api.AuthHandler{DB: db, Cfg: cfg}
-	billingHandler := &api.BillingHandler{DB: db, TelegramService: telegramService, HostnameWorker: hostnameWorker}
+	billingHandler := &api.BillingHandler{DB: db, TelegramService: telegramService, HostnameWorker: hostnameWorker, EmailService: emailService}
 	netflowHandler := api.NewAPIHandler(db)
 
 	// --- SWAGGER ROUTE ---

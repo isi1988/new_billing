@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/golang-jwt/jwt/v4"
 	"log"
 	"net/http"
@@ -41,9 +42,28 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := models.User{}
-	if err := h.DB.Get(&user, "SELECT * FROM users WHERE username=$1", creds.Username); err != nil {
-		http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
-		return
+	
+	// Сначала пытаемся найти пользователя по username
+	err := h.DB.Get(&user, "SELECT * FROM users WHERE username=$1", creds.Username)
+	if err != nil {
+		// Если не нашли по username, пытаемся найти по номеру договора
+		// Получаем клиента по номеру договора и затем его пользователя
+		var clientID int
+		contractErr := h.DB.Get(&clientID, 
+			"SELECT client_id FROM contracts WHERE number = $1", creds.Username)
+		
+		if contractErr == nil {
+			// Найден договор, ищем пользователя клиента по 6-значному ID
+			username := fmt.Sprintf("%06d", clientID)
+			userErr := h.DB.Get(&user, "SELECT * FROM users WHERE username=$1", username)
+			if userErr != nil {
+				http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
+				return
+			}
+		} else {
+			http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
+			return
+		}
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(creds.Password)); err != nil {

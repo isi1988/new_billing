@@ -11,6 +11,7 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Nfcapd   NfcapdConfig   `yaml:"nfcapd"`
 	Telegram TelegramConfig `yaml:"telegram"`
+	SMTP     SMTPConfig     `yaml:"smtp"`
 }
 
 // ДОБАВЛЕНА СТРУКТУРА
@@ -39,6 +40,15 @@ type NfcapdConfig struct {
 type TelegramConfig struct {
 	BotToken string `yaml:"bot_token"`
 	ChatID   string `yaml:"chat_id"`
+	Enabled  bool   `yaml:"enabled"`
+}
+
+type SMTPConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	From     string `yaml:"from"`
 	Enabled  bool   `yaml:"enabled"`
 }
 

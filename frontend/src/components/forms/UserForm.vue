@@ -34,9 +34,15 @@ function handleSubmit() {
       <label for="username">Имя пользователя</label>
       <input id="username" type="text" v-model="form.username" required />
     </div>
-    <div class="form-group" v-if="!isEditMode">
-      <label for="password">Пароль</label>
-      <input id="password" type="password" v-model="form.password" required />
+    <div class="form-group">
+      <label for="password">{{ isEditMode ? 'Новый пароль' : 'Пароль' }}</label>
+      <input 
+        id="password" 
+        type="password" 
+        v-model="form.password" 
+        :required="!isEditMode"
+        :placeholder="isEditMode ? 'Оставьте пустым, если не хотите изменять' : ''"
+      />
     </div>
     <div class="form-group">
       <label for="role">Роль</label>
@@ -45,7 +51,6 @@ function handleSubmit() {
         <option value="admin">Администратор</option>
       </select>
     </div>
-    <p v-if="isEditMode" class="form-note">Оставьте поле пароля пустым, если не хотите его изменять.</p>
     <div class="form-actions">
       <button type="button" class="btn btn-secondary" @click="$emit('cancel')">Отмена</button>
       <button type="submit" class="btn btn-primary">Сохранить</button>
