@@ -1,16 +1,23 @@
 <script setup>
 import { ref, computed, reactive } from 'vue';
 import { useCrud } from '@/composables/useCrud';
+import { useNotificationStore } from '@/stores/notification';
 import DataTable from '@/components/ui/DataTable.vue';
 import Modal from '@/components/ui/Modal.vue';
 import UserForm from '@/components/forms/UserForm.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 
 const { items: users, loading, createItem, updateItem, deleteItem } = useCrud('users');
+const notificationStore = useNotificationStore();
 
 const isModalOpen = ref(false);
 const currentUser = ref(null);
 const isEditMode = ref(false);
+
+// Confirm dialog state
+const isConfirmDialogOpen = ref(false);
+const userToDelete = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -98,9 +105,15 @@ async function handleSave(userData) {
   }
 }
 
-async function handleDelete(userId) {
+function confirmDelete(userId) {
+  const user = users.value.find(u => u.id === userId);
+  userToDelete.value = user;
+  isConfirmDialogOpen.value = true;
+}
+
+async function handleDelete() {
   try {
-    await deleteItem(userId);
+    await deleteItem(userToDelete.value.id);
     notificationStore.addNotification({
       type: 'success',
       title: 'Пользователь удалён',
@@ -112,7 +125,15 @@ async function handleDelete(userId) {
       title: 'Ошибка удаления',
       message: 'Не удалось удалить пользователя'
     });
+  } finally {
+    isConfirmDialogOpen.value = false;
+    userToDelete.value = null;
   }
+}
+
+function cancelDelete() {
+  isConfirmDialogOpen.value = false;
+  userToDelete.value = null;
 }
 
 // Search and filter functions
@@ -143,7 +164,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     />
 
     <button class="fab" @click="openCreateModal">
@@ -162,5 +183,17 @@ function clearFilters() {
           @cancel="isModalOpen = false"
       />
     </Modal>
+
+    <ConfirmDialog
+      :is-open="isConfirmDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="userToDelete ? `Вы действительно хотите удалить пользователя '${userToDelete.username}'?` : ''"
+      details="Это действие нельзя отменить. Все данные пользователя будут удалены навсегда."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>

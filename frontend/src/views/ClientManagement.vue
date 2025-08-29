@@ -8,6 +8,7 @@ import ClientForm from '@/components/forms/ClientForm.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import PhoneDisplay from '@/components/ui/PhoneDisplay.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import apiClient from '@/api/client';
 import { formatDate } from '@/utils/dateUtils';
 import { useNotificationStore } from '@/stores/notification';
@@ -34,6 +35,15 @@ const loadingContracts = ref(new Set());
 const isModalOpen = ref(false);
 const currentClient = ref(null);
 const isEditMode = ref(false);
+
+// Confirm dialog state
+const isDeleteDialogOpen = ref(false);
+const isBlockDialogOpen = ref(false);
+const isContractBlockDialogOpen = ref(false);
+const clientToDelete = ref(null);
+const clientToBlock = ref(null);
+const contractToBlock = ref(null);
+const contractBlockClientId = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -163,45 +173,74 @@ async function handleSave(clientData) {
   }
 }
 
-async function handleDelete(itemId) {
-  {
-    try {
-      await deleteItem(itemId);
-      notificationStore.addNotification({
-        type: 'success',
-        title: 'Клиент удалён',
-        message: 'Клиент успешно удалён'
-      });
-    } catch (error) {
-      notificationStore.addNotification({
-        type: 'error',
-        title: 'Ошибка удаления',
-        message: 'Не удалось удалить клиента'
-      });
-    }
+function confirmDelete(itemId) {
+  const client = clients.value.find(c => c.id === itemId);
+  clientToDelete.value = client;
+  isDeleteDialogOpen.value = true;
+}
+
+async function handleDelete() {
+  try {
+    await deleteItem(clientToDelete.value.id);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Клиент удалён',
+      message: 'Клиент успешно удалён'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить клиента'
+    });
+  } finally {
+    isDeleteDialogOpen.value = false;
+    clientToDelete.value = null;
   }
 }
 
-async function handleBlock(client) {
-  const action = client.is_blocked ? 'разблокировать' : 'заблокировать';
-  {
-    try {
-      const endpoint = client.is_blocked ? 'unblock' : 'block';
-      await apiClient.post(`/clients/${client.id}/${endpoint}`);
-      
-      // Обновляем статус клиента в локальном массиве
-      const index = clients.value.findIndex(c => c.id === client.id);
-      if (index !== -1) {
-        clients.value[index].is_blocked = !client.is_blocked;
-      }
-    } catch (error) {
-      notificationStore.addNotification({
-        type: 'error',
-        title: 'Ошибка операции',
-        message: `Не удалось ${action} клиента`
-      });
+function cancelDelete() {
+  isDeleteDialogOpen.value = false;
+  clientToDelete.value = null;
+}
+
+function confirmBlock(client) {
+  clientToBlock.value = client;
+  isBlockDialogOpen.value = true;
+}
+
+async function handleBlock() {
+  const action = clientToBlock.value.is_blocked ? 'разблокировать' : 'заблокировать';
+  try {
+    const endpoint = clientToBlock.value.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/clients/${clientToBlock.value.id}/${endpoint}`);
+    
+    // Обновляем статус клиента в локальном массиве
+    const index = clients.value.findIndex(c => c.id === clientToBlock.value.id);
+    if (index !== -1) {
+      clients.value[index].is_blocked = !clientToBlock.value.is_blocked;
     }
+    
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Операция выполнена',
+      message: `Клиент успешно ${clientToBlock.value.is_blocked ? 'разблокирован' : 'заблокирован'}`
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка операции',
+      message: `Не удалось ${action} клиента`
+    });
+  } finally {
+    isBlockDialogOpen.value = false;
+    clientToBlock.value = null;
   }
+}
+
+function cancelBlock() {
+  isBlockDialogOpen.value = false;
+  clientToBlock.value = null;
 }
 
 // Search and filter functions
@@ -234,24 +273,30 @@ async function toggleContracts(client) {
 }
 
 // Функция блокировки/разблокировки договора
-async function handleContractBlock(contract, clientId) {
-  const action = contract.is_blocked ? 'разблокировать' : 'заблокировать';
+function confirmContractBlock(contract, clientId) {
+  contractToBlock.value = contract;
+  contractBlockClientId.value = clientId;
+  isContractBlockDialogOpen.value = true;
+}
+
+async function handleContractBlock() {
+  const action = contractToBlock.value.is_blocked ? 'разблокировать' : 'заблокировать';
   try {
-    const endpoint = contract.is_blocked ? 'unblock' : 'block';
-    await apiClient.post(`/contracts/${contract.id}/${endpoint}`);
+    const endpoint = contractToBlock.value.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/contracts/${contractToBlock.value.id}/${endpoint}`);
     
     // Обновляем статус договора в локальном массиве
-    if (clientContracts.value[clientId]) {
-      const index = clientContracts.value[clientId].findIndex(c => c.id === contract.id);
+    if (clientContracts.value[contractBlockClientId.value]) {
+      const index = clientContracts.value[contractBlockClientId.value].findIndex(c => c.id === contractToBlock.value.id);
       if (index !== -1) {
-        clientContracts.value[clientId][index].is_blocked = !contract.is_blocked;
+        clientContracts.value[contractBlockClientId.value][index].is_blocked = !contractToBlock.value.is_blocked;
       }
     }
     
     notificationStore.addNotification({
       type: 'success',
       title: 'Операция выполнена',
-      message: `Договор успешно ${contract.is_blocked ? 'заблокирован' : 'разблокирован'}`
+      message: `Договор успешно ${contractToBlock.value.is_blocked ? 'разблокирован' : 'заблокирован'}`
     });
   } catch (error) {
     notificationStore.addNotification({
@@ -259,7 +304,17 @@ async function handleContractBlock(contract, clientId) {
       title: 'Ошибка операции',
       message: `Не удалось ${action} договор`
     });
+  } finally {
+    isContractBlockDialogOpen.value = false;
+    contractToBlock.value = null;
+    contractBlockClientId.value = null;
   }
+}
+
+function cancelContractBlock() {
+  isContractBlockDialogOpen.value = false;
+  contractToBlock.value = null;
+  contractBlockClientId.value = null;
 }
 
 // Функции для управления договорами
@@ -312,7 +367,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     >
       <template #cell-client_type="{ item }">
         <StatusBadge type="client_type" :value="item.client_type" size="small" />
@@ -339,7 +394,7 @@ function clearFilters() {
       
       <template #actions="{ item }">
         <button 
-          @click="handleBlock(item)" 
+          @click="confirmBlock(item)" 
           :class="['btn btn-icon btn-sm', item.is_blocked ? 'unblock-btn' : 'block-btn']"
           :title="item.is_blocked ? 'Разблокировать клиента' : 'Заблокировать клиента'"
         >
@@ -387,7 +442,7 @@ function clearFilters() {
                   <span class="material-icons icon-sm">edit</span>
                 </button>
                 <button 
-                  @click.stop="handleContractBlock(contract, item.id)" 
+                  @click.stop="confirmContractBlock(contract, item.id)" 
                   :class="['btn btn-icon btn-sm', contract.is_blocked ? 'unblock-btn' : 'block-btn']"
                   :title="contract.is_blocked ? 'Разблокировать' : 'Заблокировать'"
                 >
@@ -416,6 +471,45 @@ function clearFilters() {
           @cancel="isModalOpen = false"
       />
     </Modal>
+
+    <!-- Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isDeleteDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="clientToDelete ? `Вы действительно хотите удалить клиента '${getClientName(clientToDelete)}'?` : ''"
+      details="Это действие нельзя отменить. Все договоры и подключения клиента будут удалены навсегда."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
+
+    <!-- Block/Unblock Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isBlockDialogOpen"
+      :type="clientToBlock?.is_blocked ? 'info' : 'warning'"
+      :title="clientToBlock?.is_blocked ? 'Разблокировать клиента' : 'Заблокировать клиента'"
+      :message="clientToBlock ? `Вы действительно хотите ${clientToBlock.is_blocked ? 'разблокировать' : 'заблокировать'} клиента '${getClientName(clientToBlock)}'?` : ''"
+      :details="clientToBlock?.is_blocked ? 'Клиент сможет снова пользоваться услугами.' : 'Клиент не сможет пользоваться услугами до разблокировки.'"
+      :confirm-text="clientToBlock?.is_blocked ? 'Разблокировать' : 'Заблокировать'"
+      cancel-text="Отмена"
+      @confirm="handleBlock"
+      @cancel="cancelBlock"
+    />
+
+    <!-- Contract Block/Unblock Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isContractBlockDialogOpen"
+      :type="contractToBlock?.is_blocked ? 'info' : 'warning'"
+      :title="contractToBlock?.is_blocked ? 'Разблокировать договор' : 'Заблокировать договор'"
+      :message="contractToBlock ? `Вы действительно хотите ${contractToBlock.is_blocked ? 'разблокировать' : 'заблокировать'} договор '${contractToBlock.number}'?` : ''"
+      :details="contractToBlock?.is_blocked ? 'Все подключения по договору будут активированы.' : 'Все подключения по договору будут заблокированы.'"
+      :confirm-text="contractToBlock?.is_blocked ? 'Разблокировать' : 'Заблокировать'"
+      cancel-text="Отмена"
+      @confirm="handleContractBlock"
+      @cancel="cancelContractBlock"
+    />
   </div>
 </template>
 

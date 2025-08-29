@@ -8,6 +8,7 @@ import ContractForm from '@/components/forms/ContractForm.vue';
 import ConnectionForm from '@/components/forms/ConnectionForm.vue';
 import StatusBadge from '@/components/ui/StatusBadge.vue';
 import SearchFilters from '@/components/ui/SearchFilters.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import apiClient from '@/api/client';
 import { formatDate } from '@/utils/dateUtils';
 import { useNotificationStore } from '@/stores/notification';
@@ -40,6 +41,15 @@ const isConnectionEditMode = ref(false);
 const expandedContracts = ref(new Set());
 const contractConnections = ref({});
 const loadingConnections = ref(new Set());
+
+// Confirm dialog state
+const isDeleteDialogOpen = ref(false);
+const isBlockDialogOpen = ref(false);
+const isConnectionBlockDialogOpen = ref(false);
+const contractToDelete = ref(null);
+const contractToBlock = ref(null);
+const connectionToBlock = ref(null);
+const connectionBlockContractId = ref(null);
 
 // Search and filter state
 const searchQuery = ref('');
@@ -190,45 +200,74 @@ async function handleConnectionSave(connectionData) {
 }
 
 // Обработка удаления
-async function handleDelete(itemId) {
-  {
-    try {
-      await deleteItem(itemId);
-      notificationStore.addNotification({
-        type: 'success',
-        title: 'Договор удалён',
-        message: 'Договор успешно удалён'
-      });
-    } catch (error) {
-      notificationStore.addNotification({
-        type: 'error',
-        title: 'Ошибка удаления',
-        message: 'Не удалось удалить договор'
-      });
-    }
+function confirmDelete(itemId) {
+  const contract = contracts.value.find(c => c.id === itemId);
+  contractToDelete.value = contract;
+  isDeleteDialogOpen.value = true;
+}
+
+async function handleDelete() {
+  try {
+    await deleteItem(contractToDelete.value.id);
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Договор удалён',
+      message: 'Договор успешно удалён'
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка удаления',
+      message: 'Не удалось удалить договор'
+    });
+  } finally {
+    isDeleteDialogOpen.value = false;
+    contractToDelete.value = null;
   }
 }
 
-async function handleBlock(contract) {
-  const action = contract.is_blocked ? 'разблокировать' : 'заблокировать';
-  {
-    try {
-      const endpoint = contract.is_blocked ? 'unblock' : 'block';
-      await apiClient.post(`/contracts/${contract.id}/${endpoint}`);
-      
-      // Обновляем статус договора в локальном массиве
-      const index = contracts.value.findIndex(c => c.id === contract.id);
-      if (index !== -1) {
-        contracts.value[index].is_blocked = !contract.is_blocked;
-      }
-    } catch (error) {
-      notificationStore.addNotification({
-        type: 'error',
-        title: 'Ошибка операции',
-        message: `Не удалось ${action} договор`
-      });
+function cancelDelete() {
+  isDeleteDialogOpen.value = false;
+  contractToDelete.value = null;
+}
+
+function confirmBlock(contract) {
+  contractToBlock.value = contract;
+  isBlockDialogOpen.value = true;
+}
+
+async function handleBlock() {
+  const action = contractToBlock.value.is_blocked ? 'разблокировать' : 'заблокировать';
+  try {
+    const endpoint = contractToBlock.value.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/contracts/${contractToBlock.value.id}/${endpoint}`);
+    
+    // Обновляем статус договора в локальном массиве
+    const index = contracts.value.findIndex(c => c.id === contractToBlock.value.id);
+    if (index !== -1) {
+      contracts.value[index].is_blocked = !contractToBlock.value.is_blocked;
     }
+    
+    notificationStore.addNotification({
+      type: 'success',
+      title: 'Операция выполнена',
+      message: `Договор успешно ${contractToBlock.value.is_blocked ? 'разблокирован' : 'заблокирован'}`
+    });
+  } catch (error) {
+    notificationStore.addNotification({
+      type: 'error',
+      title: 'Ошибка операции',
+      message: `Не удалось ${action} договор`
+    });
+  } finally {
+    isBlockDialogOpen.value = false;
+    contractToBlock.value = null;
   }
+}
+
+function cancelBlock() {
+  isBlockDialogOpen.value = false;
+  contractToBlock.value = null;
 }
 
 // Функция для переключения состояния расширения подключений
@@ -260,24 +299,30 @@ async function toggleConnections(contract) {
 }
 
 // Функция блокировки/разблокировки подключения
-async function handleConnectionBlock(connection, contractId) {
-  const action = connection.is_blocked ? 'разблокировать' : 'заблокировать';
+function confirmConnectionBlock(connection, contractId) {
+  connectionToBlock.value = connection;
+  connectionBlockContractId.value = contractId;
+  isConnectionBlockDialogOpen.value = true;
+}
+
+async function handleConnectionBlock() {
+  const action = connectionToBlock.value.is_blocked ? 'разблокировать' : 'заблокировать';
   try {
-    const endpoint = connection.is_blocked ? 'unblock' : 'block';
-    await apiClient.post(`/connections/${connection.id}/${endpoint}`);
+    const endpoint = connectionToBlock.value.is_blocked ? 'unblock' : 'block';
+    await apiClient.post(`/connections/${connectionToBlock.value.id}/${endpoint}`);
     
     // Обновляем статус подключения в локальном массиве
-    if (contractConnections.value[contractId]) {
-      const index = contractConnections.value[contractId].findIndex(c => c.id === connection.id);
+    if (contractConnections.value[connectionBlockContractId.value]) {
+      const index = contractConnections.value[connectionBlockContractId.value].findIndex(c => c.id === connectionToBlock.value.id);
       if (index !== -1) {
-        contractConnections.value[contractId][index].is_blocked = !connection.is_blocked;
+        contractConnections.value[connectionBlockContractId.value][index].is_blocked = !connectionToBlock.value.is_blocked;
       }
     }
     
     notificationStore.addNotification({
       type: 'success',
       title: 'Операция выполнена',
-      message: `Подключение успешно ${connection.is_blocked ? 'разблокировано' : 'заблокировано'}`
+      message: `Подключение успешно ${connectionToBlock.value.is_blocked ? 'разблокировано' : 'заблокировано'}`
     });
   } catch (error) {
     notificationStore.addNotification({
@@ -285,7 +330,17 @@ async function handleConnectionBlock(connection, contractId) {
       title: 'Ошибка операции',
       message: `Не удалось ${action} подключение`
     });
+  } finally {
+    isConnectionBlockDialogOpen.value = false;
+    connectionToBlock.value = null;
+    connectionBlockContractId.value = null;
   }
+}
+
+function cancelConnectionBlock() {
+  isConnectionBlockDialogOpen.value = false;
+  connectionToBlock.value = null;
+  connectionBlockContractId.value = null;
 }
 
 // Функции для управления подключениями
@@ -372,7 +427,7 @@ function clearFilters() {
         :columns="columns"
         :loading="loading"
         @edit="openEditModal"
-        @delete="handleDelete"
+        @delete="confirmDelete"
     >
       <template #cell-is_blocked="{ item }">
         <StatusBadge type="blocked_status" :value="item.is_blocked" size="small" />
@@ -398,7 +453,7 @@ function clearFilters() {
           <span class="material-icons icon-sm">analytics</span>
         </router-link>
         <button 
-          @click="handleBlock(item)" 
+          @click="confirmBlock(item)" 
           :class="['btn btn-icon btn-sm', item.is_blocked ? 'unblock-btn' : 'block-btn']"
           :title="item.is_blocked ? 'Разблокировать договор' : 'Заблокировать договор'"
         >
@@ -447,7 +502,7 @@ function clearFilters() {
                   <span class="material-icons icon-sm">edit</span>
                 </button>
                 <button 
-                  @click.stop="handleConnectionBlock(connection, item.id)" 
+                  @click.stop="confirmConnectionBlock(connection, item.id)" 
                   :class="['btn btn-icon btn-sm', connection.is_blocked ? 'unblock-btn' : 'block-btn']"
                   :title="connection.is_blocked ? 'Разблокировать' : 'Заблокировать'"
                 >
@@ -490,6 +545,45 @@ function clearFilters() {
         @cancel="showConnectionModal = false"
       />
     </Modal>
+
+    <!-- Delete Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isDeleteDialogOpen"
+      type="danger"
+      title="Подтвердите удаление"
+      :message="contractToDelete ? `Вы действительно хотите удалить договор '${contractToDelete.number}'?` : ''"
+      details="Это действие нельзя отменить. Все подключения по договору будут удалены навсегда."
+      confirm-text="Удалить"
+      cancel-text="Отмена"
+      @confirm="handleDelete"
+      @cancel="cancelDelete"
+    />
+
+    <!-- Block/Unblock Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isBlockDialogOpen"
+      :type="contractToBlock?.is_blocked ? 'info' : 'warning'"
+      :title="contractToBlock?.is_blocked ? 'Разблокировать договор' : 'Заблокировать договор'"
+      :message="contractToBlock ? `Вы действительно хотите ${contractToBlock.is_blocked ? 'разблокировать' : 'заблокировать'} договор '${contractToBlock.number}'?` : ''"
+      :details="contractToBlock?.is_blocked ? 'Все подключения по договору будут активированы.' : 'Все подключения по договору будут заблокированы.'"
+      :confirm-text="contractToBlock?.is_blocked ? 'Разблокировать' : 'Заблокировать'"
+      cancel-text="Отмена"
+      @confirm="handleBlock"
+      @cancel="cancelBlock"
+    />
+
+    <!-- Connection Block/Unblock Confirmation Dialog -->
+    <ConfirmDialog
+      :is-open="isConnectionBlockDialogOpen"
+      :type="connectionToBlock?.is_blocked ? 'info' : 'warning'"
+      :title="connectionToBlock?.is_blocked ? 'Разблокировать подключение' : 'Заблокировать подключение'"
+      :message="connectionToBlock ? `Вы действительно хотите ${connectionToBlock.is_blocked ? 'разблокировать' : 'заблокировать'} подключение '${connectionToBlock.address}'?` : ''"
+      :details="connectionToBlock?.is_blocked ? 'Подключение сможет снова пользоваться интернетом.' : 'Подключение будет отключено от интернета.'"
+      :confirm-text="connectionToBlock?.is_blocked ? 'Разблокировать' : 'Заблокировать'"
+      cancel-text="Отмена"
+      @confirm="handleConnectionBlock"
+      @cancel="cancelConnectionBlock"
+    />
 
   </div>
 </template>

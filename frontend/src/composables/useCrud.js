@@ -49,13 +49,10 @@ export function useCrud(resource) {
         error.value = null;
         try {
             const response = await apiClient.post(`/${resource}`, data);
-            // Добавляем новый элемент в массив локально
-            if (response.data && Array.isArray(items.value)) {
-                items.value.push(response.data);
-            } else {
-                // Если сервер не вернул созданный объект, перезагружаем список
-                await fetchItems();
-            }
+            // Всегда перезагружаем список после создания, чтобы получить все соединенные данные
+            // (например, названия договоров, тарифов и т.д.)
+            await fetchItems();
+            return response; // Возвращаем оригинальный ответ для обработки предупреждений
         } catch (e) {
             error.value = `Ошибка при создании элемента.`;
             console.error(e);
@@ -76,19 +73,10 @@ export function useCrud(resource) {
         error.value = null;
         try {
             const response = await apiClient.put(`/${resource}/${id}`, data);
-            // Обновляем элемент в массиве локально
-            if (response.data && Array.isArray(items.value)) {
-                const index = items.value.findIndex(item => item.id === id);
-                if (index !== -1) {
-                    items.value[index] = response.data;
-                } else {
-                    // Если элемент не найден, перезагружаем список
-                    await fetchItems();
-                }
-            } else {
-                // Если сервер не вернул обновленный объект, перезагружаем список
-                await fetchItems();
-            }
+            // Всегда перезагружаем список после обновления, чтобы получить все соединенные данные
+            // (например, названия договоров, тарифов и т.д.)
+            await fetchItems();
+            return response; // Возвращаем оригинальный ответ для обработки предупреждений
         } catch (e) {
             error.value = `Ошибка при обновлении элемента с ID: ${id}.`;
             console.error(e);

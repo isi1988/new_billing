@@ -130,6 +130,105 @@
         </div>
       </div>
 
+      <!-- Детальные потоки трафика -->
+      <div class="card mb-6">
+        <div class="card-header flex justify-between items-center">
+          <h2 class="text-xl font-semibold text-gray-900">Детальные потоки трафика</h2>
+          <div class="text-sm text-gray-500">
+            Показано {{ flows.length }} из {{ flowsPagination.total }} записей
+          </div>
+        </div>
+
+        <!-- Загрузка flows -->
+        <div v-if="flowsLoading" class="loading-container">
+          <div class="spinner"></div>
+        </div>
+
+        <!-- Таблица flows -->
+        <div v-else class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Время</th>
+                <th>Источник</th>
+                <th>Назначение</th>
+                <th>Протокол</th>
+                <th>Направление</th>
+                <th>Трафик</th>
+                <th>Пакеты</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="flows.length === 0">
+                <td colspan="7" class="text-center text-gray-500">Нет данных для отображения</td>
+              </tr>
+              <tr v-for="item in flows" :key="item.timestamp + item.src_ip + item.dst_ip">
+                <td class="text-gray-900">{{ formatDateTime(item.timestamp) }}</td>
+                <td class="text-gray-700">
+                  <div class="flow-endpoint">
+                    <IPDisplay :ip="item.src_ip" />
+                    <div class="text-xs text-gray-500 mt-1">Порт: {{ item.src_port }}</div>
+                  </div>
+                </td>
+                <td class="text-gray-700">
+                  <div class="flow-endpoint">
+                    <IPDisplay :ip="item.dst_ip" />
+                    <div class="text-xs text-gray-500 mt-1">Порт: {{ item.dst_port }}</div>
+                  </div>
+                </td>
+                <td class="text-gray-600">{{ getProtocolName(item.protocol) }}</td>
+                <td>
+                  <span :class="getDirectionClass(item.direction)">
+                    {{ getDirectionLabel(item.direction) }}
+                  </span>
+                </td>
+                <td class="font-medium">{{ formatBytes(item.bytes) }}</td>
+                <td class="text-gray-600">{{ item.packets }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Пагинация flows -->
+        <div class="card-footer flex justify-between items-center">
+          <div class="flex items-center gap-2">
+            <label class="form-label">Записей на странице:</label>
+            <select 
+              v-model="flowsPagination.limit" 
+              @change="loadFlows"
+              class="form-control"
+              style="width: auto;"
+            >
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="pagination-controls">
+            <button 
+              @click="previousFlowsPage"
+              :disabled="flowsPagination.offset === 0"
+              class="btn btn-sm btn-secondary"
+            >
+              <span class="material-icons icon-xs">arrow_back</span>
+              Назад
+            </button>
+            <span class="pagination-info">
+              Страница {{ currentFlowsPage }} из {{ totalFlowsPages }}
+            </span>
+            <button 
+              @click="nextFlowsPage"
+              :disabled="!hasNextFlowsPage"
+              class="btn btn-sm btn-secondary"
+            >
+              Вперед
+              <span class="material-icons icon-xs">arrow_forward</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Топ дней по трафику -->
       <div v-if="stats.top_days && stats.top_days.length > 0" class="card">
         <div class="card-header">
@@ -170,13 +269,17 @@
 </template>
 
 <script>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import apiClient from '../api/client';
 import { formatDate } from '@/utils/dateUtils';
+import IPDisplay from '../components/ui/IPDisplay.vue';
 
 export default {
   name: 'ConnectionStats',
+  components: {
+    IPDisplay
+  },
   setup() {
     const route = useRoute();
     const connectionId = route.params.id;
@@ -185,10 +288,24 @@ export default {
     const loading = ref(false);
     const error = ref(null);
 
+    // Flows data
+    const flows = ref([]);
+    const flowsLoading = ref(false);
+    const flowsPagination = reactive({
+      limit: 25,
+      offset: 0,
+      total: 0
+    });
+
     const filters = reactive({
       fromDate: '',
       toDate: ''
     });
+
+    // Computed properties for flows pagination
+    const currentFlowsPage = computed(() => Math.floor(flowsPagination.offset / flowsPagination.limit) + 1);
+    const totalFlowsPages = computed(() => Math.ceil(flowsPagination.total / flowsPagination.limit));
+    const hasNextFlowsPage = computed(() => flowsPagination.offset + flowsPagination.limit < flowsPagination.total);
 
     const formatBytes = (bytes) => {
       if (bytes === 0 || bytes === null || bytes === undefined) return '0 B';
@@ -198,10 +315,53 @@ export default {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const formatDateTime = (dateString) => {
+      if (!dateString) return 'N/A';
+      return new Date(dateString).toLocaleString('ru-RU', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    };
+
     const getDayOfWeek = (dateString) => {
       const days = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
       const date = new Date(dateString);
       return days[date.getDay()];
+    };
+
+    // Flow helper functions
+    const getProtocolName = (protocolNumber) => {
+      const protocols = {
+        1: 'ICMP',
+        6: 'TCP',
+        17: 'UDP',
+        47: 'GRE',
+        50: 'ESP',
+        51: 'AH'
+      };
+      return protocols[protocolNumber] || `Protocol ${protocolNumber}`;
+    };
+
+    const getDirectionLabel = (direction) => {
+      switch (direction) {
+        case 'incoming': return 'Входящий';
+        case 'outgoing': return 'Исходящий';
+        case 'mixed': return 'Смешанный';
+        default: return 'Неизвестно';
+      }
+    };
+
+    const getDirectionClass = (direction) => {
+      switch (direction) {
+        case 'incoming': return 'direction-badge incoming';
+        case 'outgoing': return 'direction-badge outgoing';
+        case 'mixed': return 'direction-badge mixed';
+        default: return 'direction-badge';
+      }
     };
 
     const loadConnectionStats = async () => {
@@ -224,6 +384,9 @@ export default {
         const response = await apiClient.get(url);
         stats.value = response.data;
         
+        // Загружаем flows после загрузки статистики
+        await loadFlows();
+        
       } catch (e) {
         if (e.response?.status === 404) {
           error.value = 'Подключение не найдено';
@@ -235,6 +398,57 @@ export default {
         console.error('Error loading connection stats:', e);
       } finally {
         loading.value = false;
+      }
+    };
+
+    const loadFlows = async () => {
+      if (!connectionId || !stats.value) {
+        return;
+      }
+      
+      flowsLoading.value = true;
+      
+      try {
+        // Используем IP адрес из статистики подключения
+        const searchIP = stats.value.connection.ip_address;
+        
+        const params = new URLSearchParams({
+          ip: searchIP,
+          page: Math.floor(flowsPagination.offset / flowsPagination.limit) + 1,
+          limit: flowsPagination.limit
+        });
+        
+        if (filters.fromDate) params.append('from', filters.fromDate);
+        if (filters.toDate) params.append('to', filters.toDate);
+        
+        console.log('Loading flows with params:', params.toString());
+        
+        const response = await apiClient.get(`/flows/search?${params.toString()}`);
+        const result = response.data;
+        
+        flows.value = result.flows || [];
+        flowsPagination.total = result.total_records || 0;
+        
+      } catch (e) {
+        console.error('Error loading flows:', e);
+        flows.value = [];
+        flowsPagination.total = 0;
+      } finally {
+        flowsLoading.value = false;
+      }
+    };
+
+    const nextFlowsPage = () => {
+      if (hasNextFlowsPage.value) {
+        flowsPagination.offset += flowsPagination.limit;
+        loadFlows();
+      }
+    };
+
+    const previousFlowsPage = () => {
+      if (flowsPagination.offset > 0) {
+        flowsPagination.offset = Math.max(0, flowsPagination.offset - flowsPagination.limit);
+        loadFlows();
       }
     };
 
@@ -255,10 +469,23 @@ export default {
       loading,
       error,
       filters,
+      flows,
+      flowsLoading,
+      flowsPagination,
+      currentFlowsPage,
+      totalFlowsPages,
+      hasNextFlowsPage,
       formatBytes,
       formatDate,
+      formatDateTime,
       getDayOfWeek,
-      loadConnectionStats
+      getProtocolName,
+      getDirectionLabel,
+      getDirectionClass,
+      loadConnectionStats,
+      loadFlows,
+      nextFlowsPage,
+      previousFlowsPage
     };
   }
 };
@@ -342,6 +569,48 @@ export default {
   padding: 3rem;
 }
 
+/* Стили для flows таблицы */
+.flow-endpoint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.direction-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.direction-badge.incoming {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.direction-badge.outgoing {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.direction-badge.mixed {
+  background-color: #f3e8ff;
+  color: #7c3aed;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pagination-info {
+  font-size: 0.875rem;
+  color: var(--gray-600);
+  padding: 0.5rem 1rem;
+}
+
 @media (max-width: 768px) {
   .connection-info-grid {
     grid-template-columns: 1fr;
@@ -353,6 +622,16 @@ export default {
   
   .additional-stats-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .card-footer {
+    flex-direction: column;
+    gap: 1rem;
+    align-items: stretch;
+  }
+  
+  .pagination-controls {
+    justify-content: center;
   }
 }
 </style>

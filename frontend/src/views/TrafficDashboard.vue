@@ -341,6 +341,27 @@ export default {
           return;
         }
 
+        // Определяем searchIP - либо из selectedClient, либо из filters.ipAddress
+        let searchIP = filters.ipAddress;
+        if (selectedClient.value && !searchIP) {
+          // Если выбран клиент, но нет IP, получаем IP клиента
+          try {
+            const clientResponse = await apiClient.get(`/clients/${selectedClient.value.id}/connections`);
+            const connections = clientResponse.data || [];
+            if (connections.length > 0) {
+              searchIP = connections[0].ip_address;
+            } else {
+              error.value = 'У выбранного клиента нет подключений';
+              loading.value = false;
+              return;
+            }
+          } catch (e) {
+            error.value = 'Ошибка при получении IP адресов клиента';
+            loading.value = false;
+            return;
+          }
+        }
+
         // Формируем параметры запроса
         const params = new URLSearchParams({
           ip: searchIP,
@@ -389,21 +410,47 @@ export default {
       selectedClient.value = null;
       filteredClients.value = clients.value;
       pagination.offset = 0;
-      searchTraffic();
+      traffic.value = [];
+      stats.value = null;
+      error.value = null;
     };
 
     const exportToCSV = async () => {
+      // Проверяем, что есть критерии поиска для экспорта
+      if (!selectedClient.value && !filters.ipAddress) {
+        error.value = 'Необходимо указать IP-адрес или выбрать клиента для экспорта';
+        return;
+      }
+      
       loading.value = true;
       error.value = null;
       
       try {
-        const queryString = buildQueryParams();
-        // Убираем пагинацию для экспорта всех данных
-        const exportParams = new URLSearchParams(queryString);
-        exportParams.delete('limit');
-        exportParams.delete('offset');
+        // Определяем searchIP аналогично searchTraffic
+        let searchIP = filters.ipAddress;
+        if (selectedClient.value && !searchIP) {
+          const clientResponse = await apiClient.get(`/clients/${selectedClient.value.id}/connections`);
+          const connections = clientResponse.data || [];
+          if (connections.length > 0) {
+            searchIP = connections[0].ip_address;
+          } else {
+            error.value = 'У выбранного клиента нет подключений';
+            loading.value = false;
+            return;
+          }
+        }
+
+        // Формируем параметры для экспорта без пагинации
+        const params = new URLSearchParams({
+          ip: searchIP
+        });
         
-        const response = await apiClient.get(`/traffic/export?${exportParams.toString()}`, {
+        if (filters.fromDate) params.append('from', filters.fromDate.split('T')[0]);
+        if (filters.toDate) params.append('to', filters.toDate.split('T')[0]);
+        
+        console.log('Exporting CSV with params:', params.toString());
+        
+        const response = await apiClient.get(`/flows/export?${params.toString()}`, {
           responseType: 'blob'
         });
         
@@ -411,15 +458,17 @@ export default {
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', `traffic_export_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`);
+        link.setAttribute('download', `flows_export_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`);
         document.body.appendChild(link);
         link.click();
         link.remove();
         window.URL.revokeObjectURL(url);
         
+        console.log('CSV export completed successfully');
+        
       } catch (e) {
         error.value = 'Ошибка при экспорте данных';
-        console.error(e);
+        console.error('Export error:', e);
       } finally {
         loading.value = false;
       }
@@ -486,7 +535,7 @@ export default {
 
     onMounted(() => {
       loadClients();
-      searchTraffic();
+      // Не вызываем searchTraffic() автоматически, так как нужны критерии поиска
     });
 
     return {
