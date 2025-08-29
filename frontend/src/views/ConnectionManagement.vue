@@ -26,12 +26,17 @@ const isEditMode = ref(false);
 const searchQuery = ref('');
 const filterValues = reactive({
   connection_type: '',
-  contract_id: '',
-  tariff_id: ''
+  contract_number: '',
+  tariff_name: ''
 });
 
+// Data for searchable dropdowns
+const contracts = ref([]);
+const tariffs = ref([]);
+const loadingFilters = ref(false);
+
 // Filter configuration
-const filters = [
+const filters = computed(() => [
   {
     key: 'connection_type',
     label: 'Тип подключения',
@@ -45,18 +50,30 @@ const filters = [
     ]
   },
   {
-    key: 'contract_id',
-    label: 'ID договора',
-    type: 'number',
-    placeholder: 'Введите ID договора...'
+    key: 'contract_number',
+    label: 'Номер договора',
+    type: 'searchable-select',
+    options: contracts.value.map(contract => ({
+      value: contract.number,
+      label: `№${contract.number}`,
+      searchText: `${contract.number} ${contract.client_name || ''}`
+    })),
+    placeholder: 'Поиск по номеру договора...',
+    loading: loadingFilters.value
   },
   {
-    key: 'tariff_id',
-    label: 'ID тарифа',
-    type: 'number',
-    placeholder: 'Введите ID тарифа...'
+    key: 'tariff_name',
+    label: 'Тариф',
+    type: 'searchable-select', 
+    options: tariffs.value.map(tariff => ({
+      value: tariff.name,
+      label: tariff.name,
+      searchText: tariff.name
+    })),
+    placeholder: 'Поиск по названию тарифа...',
+    loading: loadingFilters.value
   }
-];
+]);
 
 // Computed filtered connections
 const filteredConnections = computed(() => {
@@ -76,11 +93,11 @@ const filteredConnections = computed(() => {
   if (filterValues.connection_type) {
     filtered = filtered.filter(connection => connection.connection_type === filterValues.connection_type);
   }
-  if (filterValues.contract_id) {
-    filtered = filtered.filter(connection => connection.contract_id.toString() === filterValues.contract_id.toString());
+  if (filterValues.contract_number) {
+    filtered = filtered.filter(connection => connection.contract_number === filterValues.contract_number);
   }
-  if (filterValues.tariff_id) {
-    filtered = filtered.filter(connection => connection.tariff_id.toString() === filterValues.tariff_id.toString());
+  if (filterValues.tariff_name) {
+    filtered = filtered.filter(connection => connection.tariff_name === filterValues.tariff_name);
   }
 
   return filtered;
